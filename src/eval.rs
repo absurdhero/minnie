@@ -1,4 +1,3 @@
-use crate::compiler::Compiler;
 use anyhow::Result;
 use wasmtime::*;
 
@@ -17,21 +16,17 @@ pub struct Eval {
 }
 
 impl Eval {
-    pub fn new() -> Result<Eval> {
+    pub fn new() -> Eval {
         let engine = Engine::default();
         let store = Store::new(&engine, ());
-        Ok(Eval { engine, store })
+        Eval { engine, store }
     }
 
-    pub fn eval(&mut self, program: &str) -> Result<()> {
-        // Compile from our source language to the wasm text format (wat)
-        let compiler = Compiler::new();
-        let wat = compiler.compile(program);
-
+    pub fn eval(&mut self, wat_program: &str) -> Result<()> {
         // Create a `Module` which represents a compiled form of our
         // input. In this case it will be JIT-compiled after
         // we parse the text returned by the compiler.
-        let module = Module::new(&self.engine, wat)?;
+        let module = Module::new(&self.engine, wat_program)?;
 
         // With a compiled `Module` we can then instantiate it, creating
         // an `Instance` which represents a real running machine we can interact with.

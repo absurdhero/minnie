@@ -1,10 +1,18 @@
+mod ast;
 mod compiler;
 mod eval;
 
+#[macro_use]
+extern crate lalrpop_util;
+
+lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+
 use anyhow::Result;
 use gumdrop::Options;
+use lalrpop_util::ParseError::UnrecognizedEOF;
 use std::fs;
 
+use crate::compiler::{Compiler, CompilerError};
 use crate::eval::Eval;
 use rustyline::error::ReadlineError;
 
@@ -29,24 +37,36 @@ fn main() -> Result<()> {
         interactive = true;
     }
 
-    let mut eval = eval::Eval::new()?;
+    let mut eval = eval::Eval::new();
 
     for file in files {
         let contents = fs::read_to_string(file)?;
-        if let Err(e) = eval.eval(&contents) {
-            println!("error: {:?}", e);
-            std::process::exit(1)
+        // Compile from our source language to the wasm text format (wat)
+        let compiler = Compiler::new();
+        let result = compiler.compile(&contents);
+        match result {
+            Ok(wat) => {
+                if let Err(e) = eval.eval(&wat) {
+                    println!("error: {:?}", e);
+                    std::process::exit(1)
+                }
+            }
+            Err(e) => {
+                println!("{}", e);
+                panic!();
+            }
         }
     }
 
     if interactive {
-        repl(&mut eval)
+        let compiler = Compiler::new();
+        repl(&compiler, &mut eval)
     } else {
         Ok(())
     }
 }
 
-fn repl(eval: &mut Eval) -> Result<()> {
+fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
     let mut input: String = String::with_capacity(1024);
 
     let mut prompt_level = 1;
@@ -66,29 +86,27 @@ fn repl(eval: &mut Eval) -> Result<()> {
             }
         }
 
-        match eval_line(&mut rl, eval, input.as_ref()) {
-            Ok(true) => prompt_level = 1,
-            Ok(false) => {
+        match compiler.compile(input.as_ref()) {
+            Ok(wat) => {
+                prompt_level = 1;
+                match eval.eval(&wat) {
+                    Ok(()) => {}
+                    Err(e) => println!("error: {:?}", e),
+                }
+            }
+            Err(CompilerError::ParseError(UnrecognizedEOF {
+                expected: _,
+                location: _,
+            })) => {
                 prompt_level = 2;
                 continue;
             }
             Err(e) => {
                 prompt_level = 1;
-                println!("error: {:?}", e)
+                println!("error: compiler: {:?}", e);
             }
         }
+
         input.clear();
     }
-}
-
-/// Parses and runs a command.
-/// Returns false if the input is incomplete.
-fn eval_line(rl: &mut rustyline::Editor<()>, eval: &mut eval::Eval, input: &str) -> Result<bool> {
-    let result = eval.eval(input).map(|_| true);
-
-    // add every line to the history for now.
-    // This will change once incomplete expressions are possible.
-    rl.add_history_entry(input);
-
-    result
 }

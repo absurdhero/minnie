@@ -3,8 +3,12 @@ name = "minnie"
 version = "0.1.0"
 edition = "2021"
 
+[build-dependencies]
+lalrpop = "0.19.6"
 
 [dependencies]
+lalrpop-util =  { version = "0.19.6", features = ["lexer"] }
+regex = "1"
 anyhow = "1.0"
 gumdrop = "0.8"
 wasmtime = "0.32"
