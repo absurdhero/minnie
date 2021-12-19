@@ -48,16 +48,38 @@ impl Compiler {
     }
 
     fn codegen(&self, expr: &Expr, instructions: &mut Vec<String>) {
+        macro_rules! push {
+            // convert literals into String
+            ($s:literal) => {
+                instructions.push($s.to_string())
+            };
+            // treat multiple args as a format string with args
+            ($s:literal, $($arg:tt)+) => {
+                instructions.push(format!($s, $($arg)+))
+            };
+            ($s:expr) => {
+                instructions.push($s)
+            };
+        }
+
         match expr {
-            Expr::Number(n) => instructions.push(format!("i32.const {}", n)),
+            Expr::Number(n) => push!("i32.const {}", n),
+            Expr::Negate(b) => match b.as_ref() {
+                Expr::Number(n) => push!("i32.const -{}", n),
+                e => {
+                    self.codegen(e, instructions);
+                    push!("i32.const -1");
+                    push!("i32.mul");
+                }
+            },
             Expr::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);
                 match op {
-                    Opcode::Mul => instructions.push("i32.mul".to_string()),
-                    Opcode::Div => instructions.push("i32.div_s".to_string()),
-                    Opcode::Add => instructions.push("i32.add".to_string()),
-                    Opcode::Sub => instructions.push("i32.sub".to_string()),
+                    Opcode::Mul => push!("i32.mul"),
+                    Opcode::Div => push!("i32.div_s"),
+                    Opcode::Add => push!("i32.add"),
+                    Opcode::Sub => push!("i32.sub"),
                 };
             }
         }

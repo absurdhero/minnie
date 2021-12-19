@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use crate::ast::{Expr, Opcode};
 
 grammar;
@@ -14,8 +13,8 @@ ExprOp: Opcode = {
 };
 
 Factor: Box<Expr> = {
-    Factor FactorOp Term => Box::new(Expr::Op(<>)),
-    Term,
+    Factor FactorOp UnaryTerm => Box::new(Expr::Op(<>)),
+    UnaryTerm,
 };
 
 FactorOp: Opcode = {
@@ -23,12 +22,16 @@ FactorOp: Opcode = {
     "/" => Opcode::Div,
 };
 
+UnaryTerm: Box<Expr> = {
+    "-" <Term> => Box::new(Expr::Negate(<>)),
+    Term,
+};
+
 Term: Box<Expr> = {
-    Num => Box::new(Expr::Number(<>)),
+    Num => Box::new(<>),
     "(" <Expr> ")"
 };
 
 ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();
 
-Num: i32 = <r"[0-9]+"> => i32::from_str(<>).unwrap();
-
+Num: Expr = <r"[0-9]+"> => Expr::Number(<>.to_string());
