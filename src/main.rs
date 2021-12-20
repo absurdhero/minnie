@@ -144,26 +144,49 @@ mod tests {
         }
     }
 
+    macro_rules! returns {
+        ($($lhs:expr => $rhs:expr)+) => {{
+             $(
+                assert_eq!(run($lhs).unwrap(), $rhs);
+             )+
+        }};
+    }
+
     #[test]
     fn numeric_operations() {
-        assert_eq!(run("22").unwrap(), ReturnValue::Integer(22));
-        assert_eq!(run("(22)").unwrap(), ReturnValue::Integer(22));
-        assert_eq!(run("((22))").unwrap(), ReturnValue::Integer(22));
+        returns! {
+            "22" => ReturnValue::Integer(22)
+            "(22)" => ReturnValue::Integer(22)
+            "((1))" => ReturnValue::Integer(1)
+        }
         assert!(run("((22)").is_err());
 
-        assert_eq!(run("1+2").unwrap(), ReturnValue::Integer(3));
-        assert_eq!(run("1-2").unwrap(), ReturnValue::Integer(-1));
-        assert_eq!(run("2 * 3").unwrap(), ReturnValue::Integer(6));
-        assert_eq!(run("10 / 2").unwrap(), ReturnValue::Integer(5));
-        assert_eq!(run("11 / 2").unwrap(), ReturnValue::Integer(5));
-        assert_eq!(run("1 + 2 * 3").unwrap(), ReturnValue::Integer(7));
+        returns! {
+            "1+2" => ReturnValue::Integer(3)
+            "1-2" => ReturnValue::Integer(-1)
+            "2 * 3" => ReturnValue::Integer(6)
+            "10 / 2" => ReturnValue::Integer(5)
+            "11 / 2" => ReturnValue::Integer(5)
+            "1 + 2 * 3" => ReturnValue::Integer(7)
+        }
 
         // unary minus
-        assert_eq!(run("-2").unwrap(), ReturnValue::Integer(-2));
-        assert_eq!(run("4 * -2").unwrap(), ReturnValue::Integer(-8));
-        assert_eq!(run("4*-2").unwrap(), ReturnValue::Integer(-8));
-        assert_eq!(run("-(1+2)").unwrap(), ReturnValue::Integer(-3));
-        assert_eq!(run("-(-(-1))").unwrap(), ReturnValue::Integer(-1));
-        assert_eq!(run("7--2").unwrap(), ReturnValue::Integer(9));
+        returns! {
+            "-2" => ReturnValue::Integer(-2)
+            "4 * -2" => ReturnValue::Integer(-8)
+            "4*-2" => ReturnValue::Integer(-8)
+            "-(1+2)" => ReturnValue::Integer(-3)
+            "-(-(-1))" => ReturnValue::Integer(-1)
+            "7--2" => ReturnValue::Integer(9)
+        }
+    }
+
+    #[test]
+    fn if_condition() {
+        returns! {
+            "if true {1} else {2}" => ReturnValue::Integer(1)
+            "if false {1} else {2}" => ReturnValue::Integer(2)
+            "if true {1;2; 1+2} else {0;0}" => ReturnValue::Integer(3)
+        }
     }
 }

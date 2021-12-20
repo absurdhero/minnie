@@ -100,6 +100,28 @@ impl Compiler {
                     Opcode::Sub => push!("i64.sub"),
                 };
             }
+            Expr::Sequence(v) => {
+                // execute and throw out the result of every expr but the last
+                for e in &v[0..(v.len() - 1)] {
+                    self.codegen(e, instructions);
+                    push!("drop")
+                }
+                self.codegen(&v[v.len() - 1], instructions);
+            }
+            Expr::If(cond, t, f) => {
+                self.codegen(cond, instructions);
+                push!("if (result i64)");
+                self.codegen(t, instructions);
+                push!("else");
+                self.codegen(f, instructions);
+                push!("end");
+            }
+            Expr::Bool(true) => {
+                push!("i32.const 1")
+            }
+            Expr::Bool(false) => {
+                push!("i32.const 0")
+            }
         }
     }
 }

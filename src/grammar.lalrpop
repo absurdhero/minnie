@@ -5,6 +5,7 @@ grammar;
 pub Expr: Box<Expr> = {
     Expr ExprOp Factor => Box::new(Expr::Op(<>)),
     Factor,
+    IfExpr,
 };
 
 ExprOp: Opcode = {
@@ -28,10 +29,29 @@ UnaryTerm: Box<Expr> = {
 };
 
 Term: Box<Expr> = {
-    Num => Box::new(<>),
-    "(" <Expr> ")"
+    Num,
+    TRUE,
+    FALSE,
+    "(" <Expr> ")",
 };
 
-ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();
+Block: Box<Expr> = {
+    "{" <ExpressionSequence> "}" =>  Box::new(Expr::Sequence(<>))
+}
 
-Num: Expr = <r"[0-9]+"> => Expr::Number(<>.to_string());
+ExpressionSequence: Vec<Expr> = {
+    <mut v:ExpressionSequence> ";" <e:Expr> => {
+        v.push(*e);
+        v
+    },
+    Expr => vec![*<>],
+};
+
+IfExpr: Box<Expr> = "if" <c:Expr> <t:Block> "else" <f:Block> => Box::new(Expr::If(c, t, f));
+
+// Terminals
+
+Num: Box<Expr> = <r"[0-9]+"> => Box::new(Expr::Number(<>.to_string()));
+TRUE: Box<Expr> = "true" => Box::new(Expr::Bool(true));
+FALSE: Box<Expr> = "false" => Box::new(Expr::Bool(false));
+ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();
