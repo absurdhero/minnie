@@ -110,6 +110,7 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             }
         }
 
+        rl.add_history_entry(&input);
         input.clear();
     }
 }
@@ -185,7 +186,7 @@ mod tests {
     fn if_condition() {
         returns! {
             "if true {1} else {2}" => ReturnValue::Integer(1)
-            "if false {1} else {2}" => ReturnValue::Integer(2)
+            "if false{1} else { 2 }" => ReturnValue::Integer(2)
             "if true {1;2; 1+2} else {0;0}" => ReturnValue::Integer(3)
         }
     }
