@@ -11,5 +11,6 @@ lalrpop-util =  { version = "0.19.6", features = ["lexer"] }
 regex = "1"
 anyhow = "1.0"
 gumdrop = "0.8"
+thiserror = "1.0"
 wasmtime = "0.32"
 rustyline = "9.1"

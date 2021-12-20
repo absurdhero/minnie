@@ -28,6 +28,7 @@ struct CliOptions {
     interactive: bool,
 }
 
+/// Parses arguments and either executes a file or presents an interactive prompt
 fn main() -> Result<()> {
     let opts = CliOptions::parse_args_default_or_exit();
 
@@ -66,6 +67,8 @@ fn main() -> Result<()> {
     }
 }
 
+/// reads a line of input, evaluates it, prints the result,
+/// and loops until the user exits.
 fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
     let mut input: String = String::with_capacity(1024);
 
@@ -90,7 +93,7 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             Ok(wat) => {
                 prompt_level = 1;
                 match eval.eval(&wat) {
-                    Ok(()) => {}
+                    Ok(r) => println!("{}", r),
                     Err(e) => println!("error: {:?}", e),
                 }
             }
@@ -108,5 +111,59 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
         }
 
         input.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::eval::{EvalError, ReturnValue};
+    use crate::{eval, Compiler};
+    use thiserror::Error;
+
+    #[derive(Error, Debug)]
+    pub enum TestError {
+        #[error(transparent)]
+        EvalError(#[from] EvalError),
+        #[error(transparent)]
+        Any(#[from] anyhow::Error),
+        #[error("{msg}")]
+        Other { msg: String },
+    }
+
+    /// takes a string of source code and executes it.
+    /// Simplified error handling for tests.
+    fn run(expr: &str) -> Result<ReturnValue, TestError> {
+        let mut eval = eval::Eval::new();
+
+        // Compile from our source language to the wasm text format (wat)
+        let compiler = Compiler::new();
+        let result = compiler.compile(&expr);
+        match result {
+            Ok(thunk_source) => Ok(eval.eval(&thunk_source)?),
+            Err(e) => Err(TestError::Other { msg: e.to_string() }),
+        }
+    }
+
+    #[test]
+    fn numeric_operations() {
+        assert_eq!(run("22").unwrap(), ReturnValue::Integer(22));
+        assert_eq!(run("(22)").unwrap(), ReturnValue::Integer(22));
+        assert_eq!(run("((22))").unwrap(), ReturnValue::Integer(22));
+        assert!(run("((22)").is_err());
+
+        assert_eq!(run("1+2").unwrap(), ReturnValue::Integer(3));
+        assert_eq!(run("1-2").unwrap(), ReturnValue::Integer(-1));
+        assert_eq!(run("2 * 3").unwrap(), ReturnValue::Integer(6));
+        assert_eq!(run("10 / 2").unwrap(), ReturnValue::Integer(5));
+        assert_eq!(run("11 / 2").unwrap(), ReturnValue::Integer(5));
+        assert_eq!(run("1 + 2 * 3").unwrap(), ReturnValue::Integer(7));
+
+        // unary minus
+        assert_eq!(run("-2").unwrap(), ReturnValue::Integer(-2));
+        assert_eq!(run("4 * -2").unwrap(), ReturnValue::Integer(-8));
+        assert_eq!(run("4*-2").unwrap(), ReturnValue::Integer(-8));
+        assert_eq!(run("-(1+2)").unwrap(), ReturnValue::Integer(-3));
+        assert_eq!(run("-(-(-1))").unwrap(), ReturnValue::Integer(-1));
+        assert_eq!(run("7--2").unwrap(), ReturnValue::Integer(9));
     }
 }

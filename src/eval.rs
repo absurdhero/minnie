@@ -1,4 +1,7 @@
-use anyhow::Result;
+use crate::compiler::ThunkSource;
+use std::fmt;
+use std::fmt::{Display, Formatter};
+use thiserror::Error;
 use wasmtime::*;
 
 pub struct Eval {
@@ -15,6 +18,29 @@ pub struct Eval {
     store: Store<()>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReturnValue {
+    Integer(i64),
+}
+
+impl Display for ReturnValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ReturnValue::Integer(i) => write!(f, "{}", i),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum EvalError {
+    #[error(transparent)]
+    Trap(#[from] Trap),
+
+    // wasmtime uses `anyhow` so we have to handle this error type
+    #[error(transparent)]
+    Any(#[from] anyhow::Error),
+}
+
 impl Eval {
     pub fn new() -> Eval {
         let engine = Engine::default();
@@ -22,11 +48,11 @@ impl Eval {
         Eval { engine, store }
     }
 
-    pub fn eval(&mut self, wat_program: &str) -> Result<()> {
+    pub fn eval(&mut self, thunk_source: &ThunkSource) -> Result<ReturnValue, EvalError> {
         // Create a `Module` which represents a compiled form of our
         // input. In this case it will be JIT-compiled after
         // we parse the text returned by the compiler.
-        let module = Module::new(&self.engine, wat_program)?;
+        let module = Module::new(&self.engine, &thunk_source.wasm_text)?;
 
         // With a compiled `Module` we can then instantiate it, creating
         // an `Instance` which represents a real running machine we can interact with.
@@ -36,10 +62,11 @@ impl Eval {
             .get_func(&mut self.store, "top_level")
             .expect("`top_level` was not an exported function");
 
-        let top_level = top_level.typed::<(), i32, _>(&self.store)?;
+        let top_level = top_level.typed::<(), i64, _>(&self.store)?;
 
-        let result = top_level.call(&mut self.store, ())?;
-        println!("Returned Number: {:?}", result);
-        Ok(())
+        match top_level.call(&mut self.store, ()) {
+            Ok(result) => Ok(ReturnValue::Integer(result)),
+            Err(trap) => Err(EvalError::from(trap)),
+        }
     }
 }
