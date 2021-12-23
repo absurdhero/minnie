@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         match result {
             Ok(wat) => {
                 if let Err(e) = eval.eval(&wat) {
-                    println!("error: {:?}", e);
+                    println!("error: {}", e);
                     std::process::exit(1)
                 }
             }
@@ -84,7 +84,7 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             Err(ReadlineError::Interrupted) => std::process::exit(1),
             Err(ReadlineError::Eof) => std::process::exit(1),
             Err(err) => {
-                println!("error: {:?}", err);
+                println!("error: {}", err);
                 std::process::exit(1)
             }
         }
@@ -94,7 +94,7 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
                 prompt_level = 1;
                 match eval.eval(&wat) {
                     Ok(r) => println!("{}", r),
-                    Err(e) => println!("error: {:?}", e),
+                    Err(e) => println!("error: {}", e),
                 }
             }
             Err(CompilerError::ParseError(UnrecognizedEOF {
@@ -106,7 +106,11 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             }
             Err(e) => {
                 prompt_level = 1;
-                println!("error: compiler: {:?}", e);
+                match e {
+                    CompilerError::ParseError(p) => {
+                        println!("{}", p);
+                    }
+                }
             }
         }
 
@@ -183,11 +187,20 @@ mod tests {
     }
 
     #[test]
+    fn boolean() {
+        returns! {
+            "if true {false} else {true}" => ReturnValue::Bool(false)
+            "if false{1} else { 2 }" => ReturnValue::Integer(2)
+            "if true {1;true; 1+2} else {0;0}" => ReturnValue::Integer(3)
+        }
+    }
+
+    #[test]
     fn if_condition() {
         returns! {
             "if true {1} else {2}" => ReturnValue::Integer(1)
             "if false{1} else { 2 }" => ReturnValue::Integer(2)
-            "if true {1;2; 1+2} else {0;0}" => ReturnValue::Integer(3)
+            "if true {1;true; 1+2} else {0;0}" => ReturnValue::Integer(3)
         }
     }
 }

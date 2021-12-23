@@ -1,31 +1,16 @@
 use crate::ast;
-use crate::ast::{Expr, Opcode, ParseError};
-use std::error::Error;
-use std::fmt;
-use std::fmt::{Display, Formatter};
+use crate::ast::{Expr, ExprKind, Opcode, ParseError, Type};
+use thiserror::Error;
+use wasmtime::ValType;
 
 pub struct Compiler {}
 
 /// Compiler Errors
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum CompilerError<'a> {
+    #[error("parse error: {0}")]
     ParseError(ParseError<'a>),
-}
-
-impl Display for CompilerError<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CompilerError::ParseError(e) => write!(f, "parse error: {}", e),
-        }
-    }
-}
-
-impl Error for CompilerError<'_> {}
-
-/// Types supported by the language
-pub enum Type {
-    Int64,
 }
 
 /// An executable unit of code
@@ -34,6 +19,16 @@ pub struct ThunkSource {
     pub wasm_text: String,
     /// The type of the return value that results from running this code
     pub return_type: Type,
+}
+
+impl Type {
+    /// map data types into their wasm format
+    pub fn wasm_type(&self) -> ValType {
+        match self {
+            Type::Int64 => ValType::I64,
+            Type::Bool => ValType::I32,
+        }
+    }
 }
 
 impl Compiler {
@@ -48,10 +43,13 @@ impl Compiler {
         let mut instructions: Vec<String> = vec![];
         self.codegen(&*expr, &mut instructions);
 
-        let header = r#"
+        let header = format!(
+            r#"
             (module
-              (func (export "top_level") (result i64)
-          "#;
+              (func (export "top_level") (result {})
+          "#,
+            expr.ty.wasm_type()
+        );
 
         let footer = r#"
               )
@@ -61,7 +59,7 @@ impl Compiler {
         let output = format!("{}\n{}\n{}", header, instructions.join("\n"), footer);
         Ok(ThunkSource {
             wasm_text: output,
-            return_type: Type::Int64,
+            return_type: expr.ty,
         })
     }
 
@@ -80,17 +78,20 @@ impl Compiler {
             };
         }
 
-        match expr {
-            Expr::Number(n) => push!("i64.const {}", n),
-            Expr::Negate(b) => match b.as_ref() {
-                Expr::Number(n) => push!("i64.const -{}", n),
+        match &expr.kind {
+            ExprKind::Number(n) => push!("i64.const {}", n),
+            ExprKind::Negate(b) => match b.as_ref() {
+                Expr {
+                    kind: ExprKind::Number(n),
+                    ty: Type::Int64,
+                } => push!("i64.const -{}", n),
                 e => {
                     self.codegen(e, instructions);
                     push!("i64.const -1");
                     push!("i64.mul");
                 }
             },
-            Expr::Op(e1, op, e2) => {
+            ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);
                 match op {
@@ -100,7 +101,7 @@ impl Compiler {
                     Opcode::Sub => push!("i64.sub"),
                 };
             }
-            Expr::Sequence(v) => {
+            ExprKind::Sequence(v) => {
                 // execute and throw out the result of every expr but the last
                 for e in &v[0..(v.len() - 1)] {
                     self.codegen(e, instructions);
@@ -108,18 +109,18 @@ impl Compiler {
                 }
                 self.codegen(&v[v.len() - 1], instructions);
             }
-            Expr::If(cond, t, f) => {
+            ExprKind::If(cond, t, f) => {
                 self.codegen(cond, instructions);
-                push!("if (result i64)");
+                push!("if (result {})", t.ty.wasm_type());
                 self.codegen(t, instructions);
                 push!("else");
                 self.codegen(f, instructions);
                 push!("end");
             }
-            Expr::Bool(true) => {
+            ExprKind::Bool(true) => {
                 push!("i32.const 1")
             }
-            Expr::Bool(false) => {
+            ExprKind::Bool(false) => {
                 push!("i32.const 0")
             }
         }

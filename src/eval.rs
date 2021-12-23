@@ -1,8 +1,11 @@
-use crate::compiler::ThunkSource;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+
+use crate::ast::Type;
 use thiserror::Error;
 use wasmtime::*;
+
+use crate::compiler::ThunkSource;
 
 pub struct Eval {
     // An engine stores and configures global compilation settings like
@@ -21,12 +24,14 @@ pub struct Eval {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReturnValue {
     Integer(i64),
+    Bool(bool),
 }
 
 impl Display for ReturnValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ReturnValue::Integer(i) => write!(f, "{}", i),
+            ReturnValue::Bool(b) => write!(f, "{}", b),
         }
     }
 }
@@ -62,10 +67,29 @@ impl Eval {
             .get_func(&mut self.store, "top_level")
             .expect("`top_level` was not an exported function");
 
-        let top_level = top_level.typed::<(), i64, _>(&self.store)?;
+        let mut returns = [Val::I64(0)];
+        let result = top_level.call(&mut self.store, &[], &mut returns);
 
-        match top_level.call(&mut self.store, ()) {
-            Ok(result) => Ok(ReturnValue::Integer(result)),
+        match result {
+            Ok(_) => {
+                let returned = &returns[0];
+                match thunk_source.return_type {
+                    Type::Int64 => {
+                        if let Val::I64(i) = returned {
+                            Ok(ReturnValue::Integer(*i))
+                        } else {
+                            Err(EvalError::Any(anyhow::Error::msg("type mismatch")))
+                        }
+                    }
+                    Type::Bool => {
+                        if let Val::I32(b) = returned {
+                            Ok(ReturnValue::Bool(*b != 0))
+                        } else {
+                            Err(EvalError::Any(anyhow::Error::msg("type mismatch")))
+                        }
+                    }
+                }
+            }
             Err(trap) => Err(EvalError::from(trap)),
         }
     }

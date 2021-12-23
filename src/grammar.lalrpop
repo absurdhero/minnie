@@ -1,9 +1,13 @@
-use crate::ast::{Expr, Opcode};
+use crate::ast::{ExprKind, Opcode, Type, Expr, SyntaxError};
 
 grammar;
 
+extern {
+    type Error = SyntaxError;
+}
+
 pub Expr: Box<Expr> = {
-    Expr ExprOp Factor => Box::new(Expr::Op(<>)),
+    Expr ExprOp Factor =>? Expr::new(ExprKind::Op(<>)),
     Factor,
     IfExpr,
 };
@@ -14,7 +18,7 @@ ExprOp: Opcode = {
 };
 
 Factor: Box<Expr> = {
-    Factor FactorOp UnaryTerm => Box::new(Expr::Op(<>)),
+    Factor FactorOp UnaryTerm =>? Expr::new(ExprKind::Op(<>)),
     UnaryTerm,
 };
 
@@ -24,20 +28,20 @@ FactorOp: Opcode = {
 };
 
 UnaryTerm: Box<Expr> = {
-    "-" <Term> => Box::new(Expr::Negate(<>)),
+    "-" <Term> =>? Expr::new(ExprKind::Negate(<>)),
     Term,
 };
 
 Term: Box<Expr> = {
-    Num,
-    TRUE,
-    FALSE,
+    Num => Box::new(<>),
+    TRUE => Box::new(<>),
+    FALSE => Box::new(<>),
     "(" <Expr> ")",
 };
 
 Block: Box<Expr> = {
-    "{" <ExpressionSequence> "}" =>  Box::new(Expr::Sequence(<>))
-}
+    "{" <ExpressionSequence> "}" =>?  Expr::new(ExprKind::Sequence(<>)),
+};
 
 ExpressionSequence: Vec<Expr> = {
     <mut v:ExpressionSequence> ";" <e:Expr> => {
@@ -47,11 +51,11 @@ ExpressionSequence: Vec<Expr> = {
     Expr => vec![*<>],
 };
 
-IfExpr: Box<Expr> = "if" <c:Expr> <t:Block> "else" <f:Block> => Box::new(Expr::If(c, t, f));
+IfExpr: Box<Expr> = "if" <c:Expr> <t:Block> "else" <f:Block> =>? Expr::new(ExprKind::If(c, t, f));
 
 // Terminals
 
-Num: Box<Expr> = <r"[0-9]+"> => Box::new(Expr::Number(<>.to_string()));
-TRUE: Box<Expr> = "true" => Box::new(Expr::Bool(true));
-FALSE: Box<Expr> = "false" => Box::new(Expr::Bool(false));
+Num: Expr = <r:r"[0-9]+"> => Expr { kind: ExprKind::Number(<>.to_string()), ty: Type::Int64 };
+TRUE: Expr = "true" => Expr { kind: ExprKind::Bool(true), ty: Type::Bool };
+FALSE: Expr = "false" => Expr { kind: ExprKind::Bool(false), ty: Type::Bool };
 ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();
