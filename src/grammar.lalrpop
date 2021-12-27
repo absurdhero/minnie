@@ -1,19 +1,22 @@
-use crate::ast::{ExprKind, Opcode, Expr, SyntaxError};
+use crate::ast::{AstError, ExprKind, Opcode, Expr, SpExpr};
+use crate::span::Span;
+use lalrpop_util::ParseError;
 
 grammar;
 
 extern {
-    type Error = SyntaxError;
+    type Error = Span<AstError>;
 }
 
-/// wraps an ExprKind into an Expr which tracks its type and location
-Sp<Rule>: Box<Expr> =
+/// wraps Expr and AstError in a Span which tracks its location
+Sp<Rule>: SpExpr =
     <l: @L> <rule: Rule> <r: @R> =>?
-        Expr::new(rule, l..r);
+        Expr::new(rule).map(|e| (l, e, r).into())
+                       .map_err(|err| ParseError::User { error: (l, err, r).into() });
 
 
 // The root of the grammar
-pub Expression: Box<Expr> = {
+pub Expression: SpExpr = {
     Sp<Expr>
 }
 
@@ -55,12 +58,12 @@ Block: ExprKind = {
     "{" <ExpressionSequence> "}" =>  ExprKind::Sequence(<>),
 };
 
-ExpressionSequence: Vec<Expr> = {
+ExpressionSequence: Vec<SpExpr> = {
     <mut v:ExpressionSequence> ";" <e:Sp<Expr>> => {
-        v.push(*e);
+        v.push(e);
         v
     },
-    Sp<Expr> => vec![*<>],
+    Sp<Expr> => vec![<>],
 };
 
 IfExpr: ExprKind = "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => ExprKind::If(c, t, f);

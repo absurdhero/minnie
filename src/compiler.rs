@@ -1,5 +1,8 @@
 use crate::ast;
 use crate::ast::{Expr, ExprKind, Opcode, ParseError, Type};
+use crate::span::Span;
+use std::fmt;
+use std::fmt::Formatter;
 use thiserror::Error;
 use wasmtime::ValType;
 
@@ -8,9 +11,25 @@ pub struct Compiler {}
 /// Compiler Errors
 
 #[derive(Error, Debug)]
-pub enum CompilerError<'a> {
+pub enum ErrorType<'a> {
     #[error("parse error: {0}")]
     ParseError(ParseError<'a>),
+}
+
+#[derive(Error, Debug)]
+pub struct CompilerError<'a> {
+    pub error: ErrorType<'a>,
+    pub excerpt: Option<Span<&'a str>>,
+}
+
+impl fmt::Display for CompilerError<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some(e) = &self.excerpt {
+            write!(f, "{} at \"{}\" ", self.error, **e)
+        } else {
+            write!(f, "{}", self.error)
+        }
+    }
 }
 
 /// An executable unit of code
@@ -38,7 +57,7 @@ impl Compiler {
 
     /// compiles a program in the webassembly wat format
     pub fn compile<'a>(&self, program: &'a str) -> Result<ThunkSource, CompilerError<'a>> {
-        let expr = ast::parse(program).map_err(CompilerError::ParseError)?;
+        let expr = ast::parse(program).map_err(|e| map_parse_error(e, program))?;
 
         let mut instructions: Vec<String> = vec![];
         self.codegen(&*expr, &mut instructions);
@@ -84,7 +103,6 @@ impl Compiler {
                 Expr {
                     kind: ExprKind::Number(n),
                     ty: Type::Int64,
-                    span: _,
                 } => push!("i64.const -{}", n),
                 e => {
                     self.codegen(e, instructions);
@@ -125,5 +143,25 @@ impl Compiler {
                 push!("i32.const 0")
             }
         }
+    }
+}
+
+/// Map the many ParseError types into a CompilerError
+/// with context from the original source code.
+fn map_parse_error<'a>(parse_error: ParseError<'a>, program: &'a str) -> CompilerError<'a> {
+    let range = match parse_error {
+        ParseError::InvalidToken { location } => location..location,
+        ParseError::UnrecognizedEOF { location, .. } => location..location,
+        ParseError::UnrecognizedToken {
+            token: (l, _, r), ..
+        } => l..r,
+        ParseError::ExtraToken { token: (l, _, r) } => l..r,
+        ParseError::User {
+            error: Span { start, end, .. },
+        } => start..end,
+    };
+    CompilerError {
+        error: ErrorType::ParseError(parse_error),
+        excerpt: Some((range.clone(), &program[range]).into()),
     }
 }

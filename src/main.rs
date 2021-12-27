@@ -1,20 +1,22 @@
-mod ast;
-mod compiler;
-mod eval;
-
 #[macro_use]
 extern crate lalrpop_util;
 
-lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+use std::fs;
 
 use anyhow::Result;
 use gumdrop::Options;
 use lalrpop_util::ParseError::UnrecognizedEOF;
-use std::fs;
-
-use crate::compiler::{Compiler, CompilerError};
-use crate::eval::Eval;
 use rustyline::error::ReadlineError;
+
+use crate::compiler::{Compiler, CompilerError, ErrorType};
+use crate::eval::Eval;
+
+mod ast;
+mod compiler;
+mod eval;
+mod span;
+
+lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
 #[derive(Debug, Options)]
 struct CliOptions {
@@ -97,19 +99,18 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
                     Err(e) => println!("error: {}", e),
                 }
             }
-            Err(CompilerError::ParseError(UnrecognizedEOF {
-                expected: _,
-                location: _,
-            })) => {
+            Err(CompilerError {
+                error: ErrorType::ParseError(UnrecognizedEOF { .. }),
+                excerpt: None,
+            }) => {
                 prompt_level = 2;
                 continue;
             }
-            Err(e) => {
+            Err(CompilerError { error, excerpt }) => {
                 prompt_level = 1;
-                match e {
-                    CompilerError::ParseError(p) => {
-                        println!("{}", p);
-                    }
+                match excerpt {
+                    None => println!("{}", error),
+                    Some(s) => println!("{} at `{}`", error, s),
                 }
             }
         }
@@ -121,9 +122,10 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use thiserror::Error;
+
     use crate::eval::{EvalError, ReturnValue};
     use crate::{eval, Compiler};
-    use thiserror::Error;
 
     #[derive(Error, Debug)]
     pub enum TestError {
