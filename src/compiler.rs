@@ -84,6 +84,7 @@ impl Compiler {
                 Expr {
                     kind: ExprKind::Number(n),
                     ty: Type::Int64,
+                    span: _,
                 } => push!("i64.const -{}", n),
                 e => {
                     self.codegen(e, instructions);

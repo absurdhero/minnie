@@ -1,4 +1,4 @@
-use crate::ast::{ExprKind, Opcode, Type, Expr, SyntaxError};
+use crate::ast::{ExprKind, Opcode, Expr, SyntaxError};
 
 grammar;
 
@@ -6,8 +6,20 @@ extern {
     type Error = SyntaxError;
 }
 
-pub Expr: Box<Expr> = {
-    Expr ExprOp Factor =>? Expr::new(ExprKind::Op(<>)),
+/// wraps an ExprKind into an Expr which tracks its type and location
+Sp<Rule>: Box<Expr> =
+    <l: @L> <rule: Rule> <r: @R> =>?
+        Expr::new(rule, l..r);
+
+
+// The root of the grammar
+pub Expression: Box<Expr> = {
+    Sp<Expr>
+}
+
+/// The recursive inner Expr production
+pub Expr: ExprKind = {
+    Sp<Expr> ExprOp Sp<Factor> => ExprKind::Op(<>),
     Factor,
     IfExpr,
 };
@@ -17,8 +29,8 @@ ExprOp: Opcode = {
     "-" => Opcode::Sub,
 };
 
-Factor: Box<Expr> = {
-    Factor FactorOp UnaryTerm =>? Expr::new(ExprKind::Op(<>)),
+Factor: ExprKind = {
+    Sp<Factor> FactorOp Sp<UnaryTerm> => ExprKind::Op(<>),
     UnaryTerm,
 };
 
@@ -27,35 +39,35 @@ FactorOp: Opcode = {
     "/" => Opcode::Div,
 };
 
-UnaryTerm: Box<Expr> = {
-    "-" <Term> =>? Expr::new(ExprKind::Negate(<>)),
+UnaryTerm: ExprKind = {
+    "-" <Sp<Term>> => ExprKind::Negate(<>),
     Term,
 };
 
-Term: Box<Expr> = {
-    Num => Box::new(<>),
-    TRUE => Box::new(<>),
-    FALSE => Box::new(<>),
+Term: ExprKind = {
+    Num,
+    TRUE,
+    FALSE,
     "(" <Expr> ")",
 };
 
-Block: Box<Expr> = {
-    "{" <ExpressionSequence> "}" =>?  Expr::new(ExprKind::Sequence(<>)),
+Block: ExprKind = {
+    "{" <ExpressionSequence> "}" =>  ExprKind::Sequence(<>),
 };
 
 ExpressionSequence: Vec<Expr> = {
-    <mut v:ExpressionSequence> ";" <e:Expr> => {
+    <mut v:ExpressionSequence> ";" <e:Sp<Expr>> => {
         v.push(*e);
         v
     },
-    Expr => vec![*<>],
+    Sp<Expr> => vec![*<>],
 };
 
-IfExpr: Box<Expr> = "if" <c:Expr> <t:Block> "else" <f:Block> =>? Expr::new(ExprKind::If(c, t, f));
+IfExpr: ExprKind = "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => ExprKind::If(c, t, f);
 
 // Terminals
 
-Num: Expr = <r:r"[0-9]+"> => Expr { kind: ExprKind::Number(<>.to_string()), ty: Type::Int64 };
-TRUE: Expr = "true" => Expr { kind: ExprKind::Bool(true), ty: Type::Bool };
-FALSE: Expr = "false" => Expr { kind: ExprKind::Bool(false), ty: Type::Bool };
+Num: ExprKind = <r:r"[0-9]+"> => ExprKind::Number(r.to_string());
+TRUE: ExprKind = "true" => ExprKind::Bool(true);
+FALSE: ExprKind = "false" => ExprKind::Bool(false);
 ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();

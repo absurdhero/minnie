@@ -1,5 +1,6 @@
 use crate::grammar;
 use lalrpop_util::lexer::Token;
+use std::ops::Range;
 use thiserror::Error;
 
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, SyntaxError>;
@@ -35,24 +36,35 @@ pub enum Type {
     Bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub ty: Type,
+    pub span: Range<usize>,
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.ty == other.ty
+    }
 }
 
 impl Expr {
-    pub fn new(expr: ExprKind) -> Result<Box<Expr>, ParseError<'static>> {
-        expr.into()
+    pub fn new(expr: ExprKind, span: Range<usize>) -> Result<Box<Expr>, ParseError<'static>> {
+        expr.into_expr(span)
             .map(Box::new)
             .map_err(|e| ParseError::User { error: e })
     }
 }
 
-impl ExprKind {
-    pub fn into(self) -> Result<Expr, SyntaxError> {
+impl <'a> ExprKind {
+    pub fn into_expr(self, span: Range<usize>) -> Result<Expr, SyntaxError> {
         let ty = self.infer_type()?;
-        Ok(Expr { kind: self, ty })
+        Ok(Expr {
+            kind: self,
+            ty,
+            span,
+        })
     }
 
     pub fn infer_type(&self) -> Result<Type, SyntaxError> {
@@ -63,6 +75,7 @@ impl ExprKind {
                 if let Expr {
                     kind: _,
                     ty: Type::Int64,
+                    span: _,
                 } = **e
                 {
                     Ok(Type::Int64)
@@ -96,11 +109,10 @@ fn type_error(expected: Type, found: &Expr) -> SyntaxError {
         expected,
         found: found.ty,
     }
-    //ParseError::User { error: "type error" }
 }
 
 pub fn parse(program: &str) -> Result<Box<Expr>, ParseError> {
-    let parser = grammar::ExprParser::new();
+    let parser = grammar::ExpressionParser::new();
     parser.parse(program)
 }
 
@@ -108,22 +120,28 @@ pub fn parse(program: &str) -> Result<Box<Expr>, ParseError> {
 mod tests {
     use crate::ast::{Expr, ExprKind};
 
+    macro_rules! expr {
+        ($e:expr) => {
+            Expr::new($e, 0..1).unwrap()
+        };
+    }
+
     macro_rules! parse_ok {
         ($s:literal) => {
-            assert!(crate::grammar::ExprParser::new().parse($s).is_ok())
+            assert!(crate::grammar::ExpressionParser::new().parse($s).is_ok())
         };
     }
 
     macro_rules! parse_fails {
         ($s:literal) => {
-            assert!(crate::grammar::ExprParser::new().parse($s).is_err())
+            assert!(crate::grammar::ExpressionParser::new().parse($s).is_err())
         };
     }
 
     macro_rules! parses {
         ($($lhs:expr => $rhs:expr)+) => {{
              $(
-                assert_eq!(Ok($rhs), crate::grammar::ExprParser::new().parse($lhs).map(|b| b.kind));
+                assert_eq!(Ok($rhs), crate::grammar::ExpressionParser::new().parse($lhs).map(|b| b.kind));
              )+
         }};
     }
@@ -157,15 +175,15 @@ mod tests {
             "true" => ExprKind::Bool(true)
             "false" => ExprKind::Bool(false)
             "if true { 1 } else { 2 }" => ExprKind::If(
-                Expr::new(ExprKind::Bool(true)).unwrap(),
-                Expr::new(ExprKind::Sequence(vec![ExprKind::Number("1".to_string()).into().unwrap()])).unwrap(),
-                Expr::new(ExprKind::Sequence(vec![ExprKind::Number("2".to_string()).into().unwrap()])).unwrap(),
+                expr!(ExprKind::Bool(true)),
+                expr!(ExprKind::Sequence(vec![*expr!(ExprKind::Number("1".to_string()))])),
+                expr!(ExprKind::Sequence(vec![*expr!(ExprKind::Number("2".to_string()))])),
             )
             "if true { true;1 } else { 2 }" => ExprKind::If(
-                Expr::new(ExprKind::Bool(true)).unwrap(),
-                Expr::new(ExprKind::Sequence(vec![ExprKind::Bool(true).into().unwrap(),
-                                                  ExprKind::Number("1".to_string()).into().unwrap()])).unwrap(),
-                Expr::new(ExprKind::Sequence(vec![ExprKind::Number("2".to_string()).into().unwrap()])).unwrap(),
+                expr!(ExprKind::Bool(true)),
+                expr!(ExprKind::Sequence(vec![*expr!(ExprKind::Bool(true)),
+                                              *expr!(ExprKind::Number("1".to_string()))])),
+                expr!(ExprKind::Sequence(vec![*expr!(ExprKind::Number("2".to_string()))])),
             )
         };
 
