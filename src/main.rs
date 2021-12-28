@@ -13,6 +13,7 @@ use crate::eval::Eval;
 
 mod ast;
 mod compiler;
+mod error_reporting;
 mod eval;
 mod span;
 
@@ -20,7 +21,7 @@ lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
 #[derive(Debug, Options)]
 struct CliOptions {
-    #[options(free, help = "source files to evaluate")]
+    #[options(free, help = "source files to compile and execute")]
     files: Vec<String>,
 
     #[options(help = "print help message")]
@@ -40,30 +41,32 @@ fn main() -> Result<()> {
         interactive = true;
     }
 
+    // keep the same environment state by using the same evaluator for files and the repl
     let mut eval = eval::Eval::new();
+    let mut failed = false;
 
-    for file in files {
-        let contents = fs::read_to_string(file)?;
+    for file in &files {
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
-        let result = compiler.compile(&contents);
-        match result {
-            Ok(wat) => {
-                if let Err(e) = eval.eval(&wat) {
-                    println!("error: {}", e);
-                    std::process::exit(1)
-                }
+        let source = fs::read_to_string(file)?;
+
+        match compiler.compile(&source) {
+            Ok(bytecode) => {
+                // if it compiled, evaluate it and exit if evaluation fails.
+                eval.eval(&bytecode)?;
             }
             Err(e) => {
-                println!("{}", e);
-                panic!();
+                failed = true;
+                error_reporting::print_error(file, &source, e)?;
             }
         }
     }
 
-    if interactive {
+    if failed {
+        Err(anyhow::Error::msg("aborting due to previous error"))
+    } else if interactive {
         let compiler = Compiler::new();
-        repl(&compiler, &mut eval)
+        repl(compiler, &mut eval)
     } else {
         Ok(())
     }
@@ -71,9 +74,10 @@ fn main() -> Result<()> {
 
 /// reads a line of input, evaluates it, prints the result,
 /// and loops until the user exits.
-fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
+fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
     let mut input: String = String::with_capacity(1024);
 
+    let mut expression_counter = 1;
     let mut prompt_level = 1;
     let mut rl = rustyline::Editor::<()>::new();
 
@@ -91,7 +95,12 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             }
         }
 
-        match compiler.compile(input.as_ref()) {
+        let fake_path = format!("REPL#{}", expression_counter);
+        expression_counter += 1;
+
+        let result = compiler.compile(&input);
+
+        match result {
             Ok(wat) => {
                 prompt_level = 1;
                 match eval.eval(&wat) {
@@ -101,17 +110,14 @@ fn repl(compiler: &Compiler, eval: &mut Eval) -> Result<()> {
             }
             Err(CompilerError {
                 error: ErrorType::ParseError(UnrecognizedEOF { .. }),
-                excerpt: None,
+                ..
             }) => {
                 prompt_level = 2;
                 continue;
             }
-            Err(CompilerError { error, excerpt }) => {
+            Err(error) => {
                 prompt_level = 1;
-                match excerpt {
-                    None => println!("{}", error),
-                    Some(s) => println!("{} at `{}`", error, s),
-                }
+                error_reporting::print_error(&fake_path, &input, error)?;
             }
         }
 
@@ -144,7 +150,7 @@ mod tests {
 
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
-        let result = compiler.compile(&expr);
+        let result = compiler.compile(expr);
         match result {
             Ok(thunk_source) => Ok(eval.eval(&thunk_source)?),
             Err(e) => Err(TestError::Other { msg: e.to_string() }),

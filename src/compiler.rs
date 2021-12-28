@@ -1,12 +1,13 @@
 use crate::ast;
 use crate::ast::{Expr, ExprKind, Opcode, ParseError, Type};
 use crate::span::Span;
-use std::fmt;
-use std::fmt::Formatter;
+use std::fmt::Debug;
+use std::ops::Range;
 use thiserror::Error;
 use wasmtime::ValType;
 
-pub struct Compiler {}
+///! The compiler module ties together the lexing, parsing, ast transformation, and codegen
+///! into a single abstraction. Give it source code and it gives back bytecode.
 
 /// Compiler Errors
 
@@ -17,19 +18,10 @@ pub enum ErrorType<'a> {
 }
 
 #[derive(Error, Debug)]
+#[error("{error}")]
 pub struct CompilerError<'a> {
     pub error: ErrorType<'a>,
-    pub excerpt: Option<Span<&'a str>>,
-}
-
-impl fmt::Display for CompilerError<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if let Some(e) = &self.excerpt {
-            write!(f, "{} at \"{}\" ", self.error, **e)
-        } else {
-            write!(f, "{}", self.error)
-        }
-    }
+    pub span: Option<Range<usize>>,
 }
 
 /// An executable unit of code
@@ -50,14 +42,22 @@ impl Type {
     }
 }
 
-impl Compiler {
+pub struct Compiler {}
+
+impl<'a> Compiler {
     pub fn new() -> Compiler {
         Compiler {}
     }
 
-    /// compiles a program in the webassembly wat format
-    pub fn compile<'a>(&self, program: &'a str) -> Result<ThunkSource, CompilerError<'a>> {
-        let expr = ast::parse(program).map_err(|e| map_parse_error(e, program))?;
+    /// Compiles a program in the webassembly wat format
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - A string slice of the program source text
+    /// * `file_id` - A unique number for the source file. This is intended to be a cache lookup key
+    ///               and is passed to CompilerErrors for later use when printing them.
+    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, CompilerError<'a>> {
+        let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
 
         let mut instructions: Vec<String> = vec![];
         self.codegen(&*expr, &mut instructions);
@@ -144,24 +144,24 @@ impl Compiler {
             }
         }
     }
-}
 
-/// Map the many ParseError types into a CompilerError
-/// with context from the original source code.
-fn map_parse_error<'a>(parse_error: ParseError<'a>, program: &'a str) -> CompilerError<'a> {
-    let range = match parse_error {
-        ParseError::InvalidToken { location } => location..location,
-        ParseError::UnrecognizedEOF { location, .. } => location..location,
-        ParseError::UnrecognizedToken {
-            token: (l, _, r), ..
-        } => l..r,
-        ParseError::ExtraToken { token: (l, _, r) } => l..r,
-        ParseError::User {
-            error: Span { start, end, .. },
-        } => start..end,
-    };
-    CompilerError {
-        error: ErrorType::ParseError(parse_error),
-        excerpt: Some((range.clone(), &program[range]).into()),
+    /// Map the many ParseError types into a CompilerError
+    /// with context from the original source file.
+    fn map_parse_error(&self, parse_error: ParseError<'a>) -> CompilerError<'a> {
+        let range = match parse_error {
+            ParseError::InvalidToken { location } => location..location,
+            ParseError::UnrecognizedEOF { location, .. } => location..location,
+            ParseError::UnrecognizedToken {
+                token: (l, _, r), ..
+            } => l..r,
+            ParseError::ExtraToken { token: (l, _, r) } => l..r,
+            ParseError::User {
+                error: Span { start, end, .. },
+            } => start..end,
+        };
+        CompilerError {
+            error: ErrorType::ParseError(parse_error),
+            span: Some(range),
+        }
     }
 }

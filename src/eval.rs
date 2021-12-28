@@ -7,6 +7,8 @@ use wasmtime::*;
 
 use crate::compiler::ThunkSource;
 
+///! The WebAssembly runtime. This module executes wasm programs.
+
 pub struct Eval {
     // An engine stores and configures global compilation settings like
     // optimization level, enabled wasm features, etc.
