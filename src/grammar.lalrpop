@@ -1,11 +1,29 @@
-use crate::ast::{AstError, ExprKind, Opcode, Expr, SpExpr};
+use crate::ast::{AstError, Expr, ExprKind, ErrorRecovery, Opcode, ParseError, SpExpr};
+use crate::lexer::Token;
 use crate::span::Span;
-use lalrpop_util::ParseError;
 
-grammar;
+grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<'input>>);
 
 extern {
     type Error = Span<AstError>;
+    type Location = usize;
+
+    enum Token<'input> {
+        Number => Token::Num(<&'input str>),
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "*" => Token::Multiply,
+        "/" => Token::Divide,
+        ";" => Token::Semi,
+        "{" => Token::CurlyStart,
+        "}" => Token::CurlyEnd,
+        "(" => Token::ParenStart,
+        ")" => Token::ParenEnd,
+        "if" => Token::If,
+        "else" => Token::Else,
+        "true" => Token::True,
+        "false" => Token::False,
+    }
 }
 
 /// wraps Expr and AstError in a Span which tracks its location
@@ -35,6 +53,7 @@ ExprOp: Opcode = {
 Factor: ExprKind = {
     Sp<Factor> FactorOp Sp<UnaryTerm> => ExprKind::Op(<>),
     UnaryTerm,
+    ! => { errors.push(<>.clone()); ExprKind::from_error(&<>) },
 };
 
 FactorOp: Opcode = {
@@ -48,9 +67,9 @@ UnaryTerm: ExprKind = {
 };
 
 Term: ExprKind = {
-    Num,
-    TRUE,
-    FALSE,
+    <r:Number> => ExprKind::Number(r.to_string()),
+    "true" => ExprKind::Bool(true),
+    "false" => ExprKind::Bool(false),
     "(" <Expr> ")",
 };
 
@@ -66,11 +85,6 @@ ExpressionSequence: Vec<SpExpr> = {
     Sp<Expr> => vec![<>],
 };
 
-IfExpr: ExprKind = "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => ExprKind::If(c, t, f);
-
-// Terminals
-
-Num: ExprKind = <r:r"[0-9]+"> => ExprKind::Number(r.to_string());
-TRUE: ExprKind = "true" => ExprKind::Bool(true);
-FALSE: ExprKind = "false" => ExprKind::Bool(false);
-ID: String = <s:r"[a-z][a-zA-Z0-9_]*"> => s.to_string();
+IfExpr: ExprKind = {
+    "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => ExprKind::If(c, t, f),
+}

@@ -25,6 +25,20 @@ impl<T> From<&Span<T>> for Range<usize> {
     }
 }
 
+/// If T can be cloned, so can its Span
+impl<T> Clone for Span<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Span {
+            start: self.start,
+            end: self.end,
+            item: self.item.clone(),
+        }
+    }
+}
+
 /// Construct a span from a range and object
 impl<T> From<(Range<usize>, T)> for Span<T> {
     fn from(t: (Range<usize>, T)) -> Self {

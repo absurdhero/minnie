@@ -15,6 +15,7 @@ mod ast;
 mod compiler;
 mod error_reporting;
 mod eval;
+mod lexer;
 mod span;
 
 lalrpop_mod!(#[allow(clippy::all)] pub grammar);
@@ -55,9 +56,9 @@ fn main() -> Result<()> {
                 // if it compiled, evaluate it and exit if evaluation fails.
                 eval.eval(&bytecode)?;
             }
-            Err(e) => {
+            Err(errors) => {
                 failed = true;
-                error_reporting::print_error(file, &source, e)?;
+                error_reporting::print_error(file, &source, &errors)?;
             }
         }
     }
@@ -108,16 +109,24 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
                     Err(e) => println!("error: {}", e),
                 }
             }
-            Err(CompilerError {
-                error: ErrorType::ParseError(UnrecognizedEOF { .. }),
-                ..
-            }) => {
-                prompt_level = 2;
-                continue;
-            }
-            Err(error) => {
-                prompt_level = 1;
-                error_reporting::print_error(&fake_path, &input, error)?;
+            Err(errors) => {
+                let mut printable = vec![];
+                for error in errors {
+                    match error {
+                        CompilerError {
+                            error: ErrorType::ParseError(UnrecognizedEOF { .. }),
+                            ..
+                        } => {
+                            prompt_level = 2;
+                            continue;
+                        }
+                        e => {
+                            prompt_level = 1;
+                            printable.push(e);
+                        }
+                    }
+                }
+                error_reporting::print_error(&fake_path, &input, &printable)?;
             }
         }
 
@@ -139,8 +148,8 @@ mod tests {
         EvalError(#[from] EvalError),
         #[error(transparent)]
         Any(#[from] anyhow::Error),
-        #[error("{msg}")]
-        Other { msg: String },
+        #[error("{msgs:?}")]
+        Other { msgs: Vec<String> },
     }
 
     /// takes a string of source code and executes it.
@@ -153,7 +162,9 @@ mod tests {
         let result = compiler.compile(expr);
         match result {
             Ok(thunk_source) => Ok(eval.eval(&thunk_source)?),
-            Err(e) => Err(TestError::Other { msg: e.to_string() }),
+            Err(errors) => Err(TestError::Other {
+                msgs: errors.into_iter().map(|e| e.to_string()).collect(),
+            }),
         }
     }
 

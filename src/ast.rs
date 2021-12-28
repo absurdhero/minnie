@@ -1,9 +1,10 @@
 use crate::grammar;
+use crate::lexer::{LexError, Lexer, Token};
 use crate::span::Span;
-use lalrpop_util::lexer::Token;
 use thiserror::Error;
 
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, Span<AstError>>;
+pub type ErrorRecovery<'input> = lalrpop_util::ErrorRecovery<usize, Token<'input>, Span<AstError>>;
 
 pub type SpExpr = Span<Box<Expr>>;
 
@@ -20,10 +21,16 @@ pub enum AstError {
     Error { msg: String },
     #[error("expected {expected:?} but found {found:?}")]
     TypeError { expected: Type, found: Type },
+    #[error("unknown type")]
+    UnknownTypeError,
+    // Not used. LexError are converted directly into ParseError
+    #[error(transparent)]
+    LexError(#[from] LexError),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExprKind {
+    Error(Option<Type>),
     Number(String),
     Bool(bool),
     Negate(SpExpr),
@@ -67,6 +74,9 @@ impl<'a> ExprKind {
 
     pub fn infer_type(&self) -> Result<Type, AstError> {
         match self {
+            // help the type checker recover from errors by letting the parser guess a type
+            ExprKind::Error(Some(t)) => Ok(*t),
+            ExprKind::Error(None) => Err(AstError::UnknownTypeError),
             ExprKind::Number(_) => Ok(Type::Int64),
             ExprKind::Bool(_) => Ok(Type::Bool),
             ExprKind::Negate(e) => {
@@ -101,6 +111,21 @@ impl<'a> ExprKind {
             ExprKind::Sequence(v) => Ok(v[v.len() - 1].ty),
         }
     }
+
+    /// Create an ExprKind::Error(Some(Type)) from a TypeError.
+    /// For all other error types, return ExprKind::Error(None).
+    pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> ExprKind {
+        match &error_recovery.error {
+            ParseError::User {
+                error:
+                    Span {
+                        item: AstError::TypeError { expected, .. },
+                        ..
+                    },
+            } => ExprKind::Error(Some(*expected)),
+            _ => ExprKind::Error(None),
+        }
+    }
 }
 
 fn type_error(expected: Type, found: &Expr) -> AstError {
@@ -110,9 +135,41 @@ fn type_error(expected: Type, found: &Expr) -> AstError {
     }
 }
 
-pub fn parse(program: &str) -> Result<SpExpr, ParseError> {
+pub fn parse(program: &str) -> Result<SpExpr, Vec<ParseError>> {
+    let mut lexer = Lexer::new(program);
+    let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
     let parser = grammar::ExpressionParser::new();
-    parser.parse(program)
+    let result: Result<SpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
+
+    // convert lex errors into ParseError
+    let mut errors: Vec<ParseError> = lexer
+        .errors
+        .into_iter()
+        .map(|e| match e {
+            LexError::InvalidToken((l, r)) => ParseError::UnrecognizedToken {
+                token: (l, Token::Unexpected(&program[l..r]), r),
+                expected: vec![],
+            },
+        })
+        .collect();
+
+    errors.append(&mut recovered_errors.into_iter().map(|r| r.error).collect());
+
+    match result {
+        Ok(expr) => {
+            if errors.is_empty() {
+                Ok(expr)
+            } else {
+                Err(errors)
+            }
+        }
+        Err(e) => {
+            // put the final error on the end of the error list presuming that
+            // earlier lex errors or recovered errors were the root cause(s).
+            errors.push(e);
+            Err(errors)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -56,7 +56,7 @@ impl<'a> Compiler {
     /// * `program` - A string slice of the program source text
     /// * `file_id` - A unique number for the source file. This is intended to be a cache lookup key
     ///               and is passed to CompilerErrors for later use when printing them.
-    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, CompilerError<'a>> {
+    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, Vec<CompilerError<'a>>> {
         let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
 
         let mut instructions: Vec<String> = vec![];
@@ -98,6 +98,7 @@ impl<'a> Compiler {
         }
 
         match &expr.kind {
+            ExprKind::Error(_) => panic!("encountered an ExprKind::Error in codegen"),
             ExprKind::Number(n) => push!("i64.const {}", n),
             ExprKind::Negate(b) => match b.as_ref() {
                 Expr {
@@ -147,21 +148,26 @@ impl<'a> Compiler {
 
     /// Map the many ParseError types into a CompilerError
     /// with context from the original source file.
-    fn map_parse_error(&self, parse_error: ParseError<'a>) -> CompilerError<'a> {
-        let range = match parse_error {
-            ParseError::InvalidToken { location } => location..location,
-            ParseError::UnrecognizedEOF { location, .. } => location..location,
-            ParseError::UnrecognizedToken {
-                token: (l, _, r), ..
-            } => l..r,
-            ParseError::ExtraToken { token: (l, _, r) } => l..r,
-            ParseError::User {
-                error: Span { start, end, .. },
-            } => start..end,
-        };
-        CompilerError {
-            error: ErrorType::ParseError(parse_error),
-            span: Some(range),
-        }
+    fn map_parse_error(&self, parse_errors: Vec<ParseError<'a>>) -> Vec<CompilerError<'a>> {
+        parse_errors
+            .into_iter()
+            .map(|parse_error| {
+                let range = match parse_error {
+                    ParseError::InvalidToken { location } => location..location,
+                    ParseError::UnrecognizedEOF { location, .. } => location..location,
+                    ParseError::UnrecognizedToken {
+                        token: (l, _, r), ..
+                    } => l..r,
+                    ParseError::ExtraToken { token: (l, _, r) } => l..r,
+                    ParseError::User {
+                        error: Span { start, end, .. },
+                    } => start..end,
+                };
+                CompilerError {
+                    error: ErrorType::ParseError(parse_error),
+                    span: Some(range),
+                }
+            })
+            .collect()
     }
 }

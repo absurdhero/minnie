@@ -1,21 +1,21 @@
-use crate::CompilerError;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 
+use crate::CompilerError;
+
 ///! Configures and wraps the codespan_reporting library.
 
-/// Convenience function for printing an error in a single source file in one step.
+/// Convenience function for printing errors in a single source file in one step.
 ///
 /// We don't care about re-initializing everything each time we print because it happens so rarely.
-/// Especially since there is currently no error recovery that could cause many errors in a row.
 pub fn print_error(
     source_name: &str,
     source: &str,
-    error: CompilerError<'_>,
+    errors: &[CompilerError],
 ) -> Result<(), anyhow::Error> {
     let reporter = ErrorReporting::new();
-    reporter.print(source_name, source, &error)
+    reporter.print(source_name, source, errors)
 }
 
 pub struct ErrorReporting {
@@ -35,16 +35,29 @@ impl ErrorReporting {
         &self,
         source_name: &str,
         source: &str,
-        error: &CompilerError,
+        errors: &[CompilerError],
     ) -> Result<(), anyhow::Error> {
+        let mut labels = vec![];
+        let mut first = true;
+        for error in errors {
+            if let Some(ref s) = error.span {
+                labels.push(if first {
+                    first = false;
+                    Label::primary((), s.clone()).with_message(error.to_string())
+                } else {
+                    Label::secondary((), s.clone()).with_message(error.to_string())
+                })
+            }
+        }
+
         let mut diagnostic = Diagnostic::error();
-        if let Some(ref s) = error.span {
-            diagnostic = diagnostic.with_labels(vec![
-                Label::primary((), s.clone()).with_message(error.to_string())
-            ]);
-        } else {
-            diagnostic = diagnostic.with_message(error.to_string());
-        };
+        diagnostic = diagnostic.with_labels(labels);
+
+        for error in errors {
+            if error.span.is_none() {
+                diagnostic = diagnostic.with_message(error.to_string());
+            }
+        }
 
         // we only support one source file right now.
         let file = SimpleFile::new(source_name, source);
