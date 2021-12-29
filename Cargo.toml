@@ -9,8 +9,7 @@ lalrpop = "0.19.6"
 [dependencies]
 logos = "0.12"
 codespan-reporting = "0.11"
-lalrpop-util =  { version = "0.19.6", features = ["lexer"] }
-regex = "1"
+lalrpop-util = "0.19.6"
 anyhow = "1.0"
 gumdrop = "0.8"
 thiserror = "1.0"
