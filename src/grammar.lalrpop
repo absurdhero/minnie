@@ -10,6 +10,7 @@ extern {
 
     enum Token<'input> {
         Number => Token::Num(<&'input str>),
+        ID => Token::ID(<&'input str>),
         "+" => Token::Plus,
         "-" => Token::Minus,
         "*" => Token::Multiply,
@@ -67,14 +68,15 @@ UnaryTerm: ExprKind = {
 };
 
 Term: ExprKind = {
-    <r:Number> => ExprKind::Number(r.to_string()),
+    Number => ExprKind::Number(<>.to_string()),
+    ID => ExprKind::Identifier(<>.to_string()),
     "true" => ExprKind::Bool(true),
     "false" => ExprKind::Bool(false),
     "(" <Expr> ")",
 };
 
 Block: ExprKind = {
-    "{" <ExpressionSequence> "}" =>  ExprKind::Sequence(<>),
+    "{" <ExpressionSequence> "}" =>  ExprKind::Block(<>),
 };
 
 ExpressionSequence: Vec<SpExpr> = {

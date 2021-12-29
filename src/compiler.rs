@@ -100,6 +100,9 @@ impl<'a> Compiler {
         match &expr.kind {
             ExprKind::Error(_) => panic!("encountered an ExprKind::Error in codegen"),
             ExprKind::Number(n) => push!("i64.const {}", n),
+            ExprKind::Identifier(_id) => {
+                todo!()
+            }
             ExprKind::Negate(b) => match b.as_ref() {
                 Expr {
                     kind: ExprKind::Number(n),
@@ -121,7 +124,7 @@ impl<'a> Compiler {
                     Opcode::Sub => push!("i64.sub"),
                 };
             }
-            ExprKind::Sequence(v) => {
+            ExprKind::Block(v) => {
                 // execute and throw out the result of every expr but the last
                 for e in &v[0..(v.len() - 1)] {
                     self.codegen(e, instructions);

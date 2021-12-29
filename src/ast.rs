@@ -31,12 +31,13 @@ pub enum AstError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExprKind {
     Error(Option<Type>),
+    Identifier(String),
     Number(String),
     Bool(bool),
     Negate(SpExpr),
     Op(SpExpr, Opcode, SpExpr),
     If(SpExpr, SpExpr, SpExpr),
-    Sequence(Vec<SpExpr>),
+    Block(Vec<SpExpr>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -61,17 +62,13 @@ pub struct Expr {
 }
 
 impl Expr {
-    pub fn new(expr: ExprKind) -> Result<Box<Expr>, AstError> {
-        expr.into_expr().map(Box::new)
+    pub fn new(kind: ExprKind) -> Result<Box<Expr>, AstError> {
+        let ty = kind.infer_type()?;
+        Ok(Box::new(Expr { kind, ty }))
     }
 }
 
-impl<'a> ExprKind {
-    pub fn into_expr(self) -> Result<Expr, AstError> {
-        let ty = self.infer_type()?;
-        Ok(Expr { kind: self, ty })
-    }
-
+impl ExprKind {
     pub fn infer_type(&self) -> Result<Type, AstError> {
         match self {
             // help the type checker recover from errors by letting the parser guess a type
@@ -108,7 +105,11 @@ impl<'a> ExprKind {
                     Err(type_error(Type::Int64, f))
                 }
             }
-            ExprKind::Sequence(v) => Ok(v[v.len() - 1].ty),
+            ExprKind::Block(v) => Ok(v[v.len() - 1].ty),
+            ExprKind::Identifier(_) => {
+                // temporarily stub out Identifier types as Int64 so the parser can be tested.
+                Ok(Type::Int64)
+            }
         }
     }
 
@@ -239,20 +240,30 @@ mod tests {
     }
 
     #[test]
+    fn identifiers() {
+        parses! {
+            "abc" => ExprKind::Identifier("abc".to_string())
+            "a" => ExprKind::Identifier("a".to_string())
+            "a123" => ExprKind::Identifier("a123".to_string())
+        };
+        parse_fails!("Caps");
+    }
+
+    #[test]
     fn conditionals() {
         parses! {
             "true" => ExprKind::Bool(true)
             "false" => ExprKind::Bool(false)
             "if true { 1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Sequence(vec![expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Sequence(vec![expr!(ExprKind::Number("2".to_string()))])),
+                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("1".to_string()))])),
+                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
             )
             "if true { true;1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Sequence(vec![expr!(ExprKind::Bool(true)),
+                expr!(ExprKind::Block(vec![expr!(ExprKind::Bool(true)),
                                               expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Sequence(vec![expr!(ExprKind::Number("2".to_string()))])),
+                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
             )
         };
 
