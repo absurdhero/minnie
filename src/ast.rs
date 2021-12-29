@@ -1,6 +1,7 @@
 use crate::grammar;
 use crate::lexer::{LexError, Lexer, Token};
 use crate::span::Span;
+use std::ops::Range;
 use thiserror::Error;
 
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, Span<AstError>>;
@@ -23,7 +24,10 @@ pub enum AstError {
     TypeError { expected: Type, found: Type },
     #[error("unknown type")]
     UnknownTypeError,
-    // Not used. LexError are converted directly into ParseError
+    #[error("unrecognized EOF")]
+    UnrecognizedEOF,
+    #[error("unexpected token \"{0}\". Expected one of: {1:?}")]
+    UnexpectedToken(String, Vec<String>),
     #[error(transparent)]
     LexError(#[from] LexError),
 }
@@ -136,25 +140,31 @@ fn type_error(expected: Type, found: &Expr) -> AstError {
     }
 }
 
-pub fn parse(program: &str) -> Result<SpExpr, Vec<ParseError>> {
+pub fn parse(program: &str) -> Result<SpExpr, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
     let parser = grammar::ExpressionParser::new();
     let result: Result<SpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
-    // convert lex errors into ParseError
-    let mut errors: Vec<ParseError> = lexer
+    // convert lex errors into AstError
+    let mut errors: Vec<Span<AstError>> = lexer
         .errors
         .into_iter()
         .map(|e| match e {
-            LexError::InvalidToken((l, r)) => ParseError::UnrecognizedToken {
-                token: (l, Token::Unexpected(&program[l..r]), r),
-                expected: vec![],
+            LexError::InvalidToken((l, r)) => Span {
+                start: l,
+                end: r,
+                item: AstError::LexError(e),
             },
         })
         .collect();
 
-    errors.append(&mut recovered_errors.into_iter().map(|r| r.error).collect());
+    errors.append(
+        &mut recovered_errors
+            .into_iter()
+            .map(|r| map_lalrpop_error(&r.error))
+            .collect(),
+    );
 
     match result {
         Ok(expr) => {
@@ -167,10 +177,35 @@ pub fn parse(program: &str) -> Result<SpExpr, Vec<ParseError>> {
         Err(e) => {
             // put the final error on the end of the error list presuming that
             // earlier lex errors or recovered errors were the root cause(s).
-            errors.push(e);
+            errors.push(map_lalrpop_error(&e));
             Err(errors)
         }
     }
+}
+
+fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
+    match error {
+        &ParseError::UnrecognizedEOF { location, .. } => {
+            (location..location, AstError::UnrecognizedEOF)
+        }
+        &ParseError::InvalidToken { location } => (
+            location..location,
+            AstError::LexError(LexError::InvalidToken((location, location))),
+        ),
+        &ParseError::UnrecognizedToken {
+            token,
+            ref expected,
+        } => (
+            token.0..token.2,
+            AstError::UnexpectedToken(token.1.to_string(), expected.to_vec()),
+        ),
+        &ParseError::ExtraToken { token } => (
+            token.0..token.2,
+            AstError::LexError(LexError::InvalidToken((token.0, token.2))),
+        ),
+        ParseError::User { error } => (Range::<usize>::from(error), error.item.clone()),
+    }
+    .into()
 }
 
 #[cfg(test)]

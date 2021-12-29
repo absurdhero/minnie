@@ -4,8 +4,8 @@ extern crate lalrpop_util;
 use std::fs;
 
 use anyhow::Result;
+use ast::AstError;
 use gumdrop::Options;
-use lalrpop_util::ParseError::UnrecognizedEOF;
 use rustyline::error::ReadlineError;
 
 use crate::compiler::{Compiler, CompilerError, ErrorType};
@@ -82,7 +82,7 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
     let mut prompt_level = 1;
     let mut rl = rustyline::Editor::<()>::new();
 
-    loop {
+    'outer: loop {
         let prompt = if prompt_level == 1 { "> " } else { "# " };
 
         let readline = rl.readline(prompt);
@@ -114,11 +114,11 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
                 for error in errors {
                     match error {
                         CompilerError {
-                            error: ErrorType::ParseError(UnrecognizedEOF { .. }),
+                            error: ErrorType::ParseError(AstError::UnrecognizedEOF),
                             ..
                         } => {
                             prompt_level = 2;
-                            continue;
+                            continue 'outer;
                         }
                         e => {
                             prompt_level = 1;

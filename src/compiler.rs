@@ -1,26 +1,27 @@
-use crate::ast;
-use crate::ast::{Expr, ExprKind, Opcode, ParseError, Type};
-use crate::span::Span;
 use std::fmt::Debug;
 use std::ops::Range;
+
 use thiserror::Error;
 use wasmtime::ValType;
+
+use crate::ast;
+use crate::ast::{AstError, Expr, ExprKind, Opcode, Type};
+use crate::span::Span;
 
 ///! The compiler module ties together the lexing, parsing, ast transformation, and codegen
 ///! into a single abstraction. Give it source code and it gives back bytecode.
 
 /// Compiler Errors
-
 #[derive(Error, Debug)]
-pub enum ErrorType<'a> {
+pub enum ErrorType {
     #[error("parse error: {0}")]
-    ParseError(ParseError<'a>),
+    ParseError(AstError),
 }
 
 #[derive(Error, Debug)]
 #[error("{error}")]
-pub struct CompilerError<'a> {
-    pub error: ErrorType<'a>,
+pub struct CompilerError {
+    pub error: ErrorType,
     pub span: Option<Range<usize>>,
 }
 
@@ -54,9 +55,7 @@ impl<'a> Compiler {
     /// # Arguments
     ///
     /// * `program` - A string slice of the program source text
-    /// * `file_id` - A unique number for the source file. This is intended to be a cache lookup key
-    ///               and is passed to CompilerErrors for later use when printing them.
-    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, Vec<CompilerError<'a>>> {
+    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, Vec<CompilerError>> {
         let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
 
         let mut instructions: Vec<String> = vec![];
@@ -149,26 +148,20 @@ impl<'a> Compiler {
         }
     }
 
-    /// Map the many ParseError types into a CompilerError
+    /// Map from Span<AstError> into a CompilerError
     /// with context from the original source file.
-    fn map_parse_error(&self, parse_errors: Vec<ParseError<'a>>) -> Vec<CompilerError<'a>> {
+    fn map_parse_error(&self, parse_errors: Vec<Span<AstError>>) -> Vec<CompilerError> {
         parse_errors
             .into_iter()
             .map(|parse_error| {
-                let range = match parse_error {
-                    ParseError::InvalidToken { location } => location..location,
-                    ParseError::UnrecognizedEOF { location, .. } => location..location,
-                    ParseError::UnrecognizedToken {
-                        token: (l, _, r), ..
-                    } => l..r,
-                    ParseError::ExtraToken { token: (l, _, r) } => l..r,
-                    ParseError::User {
-                        error: Span { start, end, .. },
-                    } => start..end,
-                };
+                let Span {
+                    start,
+                    end,
+                    item: error,
+                } = parse_error;
                 CompilerError {
-                    error: ErrorType::ParseError(parse_error),
-                    span: Some(range),
+                    error: ErrorType::ParseError(error),
+                    span: Some(start..end),
                 }
             })
             .collect()
