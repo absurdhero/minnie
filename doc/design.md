@@ -1,0 +1,175 @@
+# Design
+
+## Motivation
+
+All languages have a style of programming in mind. A philosophy of 
+programming happiness. This language is no different in that it attempts to 
+take the best ideas of our time and carefully tie them together into a whole 
+that delights its users.
+
+### Outline
+
+Programmers make conscious decisions about language choice based on a number of
+factors. The main factors I've seen both in the open-source community and
+commercially include:
+
+Program safety
+ - type systems
+ - handling null types
+ - error propagation
+Economy of writing
+ - typing less is better except when it gets in the way of other factors.
+Readability
+ - semantic complexity
+ - brevity vs verbosity
+Easy of learning the language
+ - familiarity (compared to past experiences)
+ - documentation
+ - language complexity (primarily governed by type system and syntax)
+Tooling
+ - build system
+ - library management
+ - editor support
+Performance
+ - Depends on the type of software being written
+
+Less discussed and less consciously influential factors include:
+Community
+ - Open decision processes
+ - Accessible forums for socialization and learning for users
+Growth and Maturity
+ - Responsive to community feedback
+ - Large number of people effectively involved in language and library evolution
+ - Backing by a corporation or non-profit entity - I believe this can come out 
+   of a successful and well-organized project and therefore isn't a 
+   predictor of success.
+
+## How `minnie` will meet these needs
+
+### Program safety
+
+A static type system with algebraic types and good modularization features.
+
+Values cannot be uninitialized and cannot be null. Has an Option type.
+
+Functions that error can return a Result monad. For functions that call a
+function that might error but need to pass handling it its own caller,
+a `?` operator as found in rust is necessary to prevent error handling from
+being cumbersome and verbose.
+
+### Readability
+
+Allowing programmers to pack too much meaning and behavior in a few characters
+also allows them to over-fit their abstractions to the problem they are trying
+to solve. An over-fit model is difficult to change and may fail in non-obvious
+ways. Features that make programs extremely terse through customizing the
+meaning of regular syntactic forms reduces readability for new members of a
+project, even if they already know the language.
+
+Examples:
+
+1. User-defined infix operators
+
+  For example, in ML and Haskell, the programmer can 
+  create their own infix operators using multiple non-alphanumeric characters 
+  with their own operator precedence (from 0-9). Relying on these complex 
+  semantics requires carefully tuning operator precedence and operator names 
+  whenever the system changes. 
+  
+  In Haskell, it is customary to create two-three symbol characters for 
+  operating on your own types. In Scala, a language inspired by Haskell, the 
+  popular build system, SBT, has a complete DSL (domain-specific language) 
+  built on user-defined operators.[^sbt]
+
+2. Macros as a primary abstraction mechanism
+
+  Macros are popularly considered to be the sign of a powerful language. I 
+  do not disagree, but I think that languages are not well-designed that 
+  lean on user-written macros to make up for a dearth of well-considered and
+  standardized support for such features as a boolean types[^bool],
+  type checking, or a module system.
+
+  On the other hand, rust gets a lot of value from macros by providing  
+  would-be language features as macros (such as the `Debug` derive macro)
+  in its standard library and offer structured and well-documented macro abilities
+  to users. I think rust uses macros for good by resisting the temptation to push
+  all language features off to macros, offering solutions to common patterns, and
+  cultivating widely used packages like `thiserror` and `anyhow` that improve the
+  readability of rust programs without causing each programmer to reinvent their
+  own common macros.
+
+[^sbt] An [example from a popular project](https://github.com/playframework/playframework/blob/master/build.sbt)
+  uses `++`, `++=`, `%`, `:=`, `:+`, `**`, `||`, and `/`, in novel ways for
+  its file and dependency operations. These save a few characters but have their
+  own precedence rules and are not obvious to a developer learning the build
+  system, or indeed, a seasoned developer writing one from scratch trying to
+  use a search engine to remind them of what one of these operators does.
+
+[^bool] C does not have boolean true and false. `#define TRUE 1`? Sure,
+  but now the type system can't tell if you accidentally passed a number to
+  something that expects a bool. Using a macro is the best thing to do 
+  in this case but the more you macro, the more, you invent your own private
+  language.
+
+
+### Easy of learning
+
+For a language to be used, programmers first have to learn it. Anything we 
+can do to reduce the quantity and speed with which programmers have to 
+acquire new knowledge helps. They shouldn't need a cheatsheet for typing 
+common arithmetic operators[^pervasives] or how to type a negative number
+[^negation].
+
+[^pervasives] https://caml.inria.fr/pub/old_caml_site/ocaml/htmlman/libref/Pervasives.html
+[^negation] https://stackoverflow.com/questions/8984661/unary-minus-and-floating-point-number-in-ocaml
+
+If we really want experienced programmers to feel like they are
+effortlessly learning the language, their intuition about the width of integers,
+how semicolons work (if present), and how to name things should feel natural
+from previous experience. While all of these must be documented for 
+beginners and programmers who don't happen to have used the most popular 
+programming languages, the less the docs must be consulted, the better.
+
+
+
+
+## Language
+
+Language properties:
+
+- statically typed
+- garbage collected
+- stack allocated values
+- rust and ML inspired syntax with the goal of being familiar to contemporary
+  programmers.
+- The type system's design is TBD
+- no planned support for continuations or exceptions - they would complicate the
+  runtime. Instead, a Result type will be introduced based on rust's monadic
+  error handling which is readable and ergonomic thanks to the `?` operator.
+
+## Compiler
+
+The overall design of the compiler is in flux. The author has researched past
+and current SML/NJ architectures, the current rust compiler design, and academic
+efforts including nanopass compiler designs. One thing is for certain: every
+compiler design differs for non-technical reasons, and they all solve similar
+problems despite their differences. The conclusion for this project is that 
+it may as well evolve organically as any industrial compiler has before it.
+
+## Runtime
+
+The runtime is built on top of a WebAssembly runtime (wasmtime) which 
+provides a portable abstraction over the bare metal. WebAssembly provides an
+implicit stack, several types of memory, and limited type safety.
+
+Wasmtime offers both ahead-of-time and just-in-time compilation. Both are
+potential targets but ahead-of-time compilation is the first priority.
+
+Despite the language being statically typed, data in the heap must be tagged so
+the garbage collector can know what types contain pointers and how to traverse
+them (as noted in CS-TR-329-91). Data in the heap is prefixed with one word
+which contains the type, gc flags, and may contain other metadata as the need
+arises. While this uses more heap space than embedded tagging, it doesn't
+require extra work to mask out tag bits when moving data to the stack. Data on
+the stack does not require any type information which allows for direct use of
+WebAssembly's numeric and pointer operations.
