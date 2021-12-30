@@ -1,4 +1,4 @@
-use crate::ast::{AstError, Expr, ExprKind, ErrorRecovery, Opcode, ParseError, SpExpr};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode};
 use crate::lexer::Token;
 use crate::span::Span;
 
@@ -27,21 +27,18 @@ extern {
     }
 }
 
-/// wraps Expr and AstError in a Span which tracks its location
-Sp<Rule>: SpExpr =
-    <l: @L> <rule: Rule> <r: @R> =>?
-        Expr::new(rule).map(|e| (l, e, r).into())
-                       .map_err(|err| ParseError::User { error: (l, err, r).into() });
-
+/// wraps UntypedExprKind in a Span which tracks its location
+Sp<Rule>: UntypedSpExpr =
+    <l: @L> <rule: Rule> <r: @R> => (l, Box::new(rule.into()), r).into();
 
 // The root of the grammar
-pub Expression: SpExpr = {
+pub Expression: UntypedSpExpr = {
     Sp<Expr>
 }
 
 /// The recursive inner Expr production
-pub Expr: ExprKind = {
-    Sp<Expr> ExprOp Sp<Factor> => ExprKind::Op(<>),
+pub Expr: UntypedExprKind = {
+    Sp<Expr> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
     Factor,
     IfExpr,
 };
@@ -51,10 +48,10 @@ ExprOp: Opcode = {
     "-" => Opcode::Sub,
 };
 
-Factor: ExprKind = {
-    Sp<Factor> FactorOp Sp<UnaryTerm> => ExprKind::Op(<>),
+Factor: UntypedExprKind = {
+    Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::Op(<>),
     UnaryTerm,
-    ! => { errors.push(<>.clone()); ExprKind::from_error(&<>) },
+    ! => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
 FactorOp: Opcode = {
@@ -62,24 +59,24 @@ FactorOp: Opcode = {
     "/" => Opcode::Div,
 };
 
-UnaryTerm: ExprKind = {
-    "-" <Sp<Term>> => ExprKind::Negate(<>),
+UnaryTerm: UntypedExprKind = {
+    "-" <Sp<Term>> => UntypedExprKind::Negate(<>),
     Term,
 };
 
-Term: ExprKind = {
-    Number => ExprKind::Number(<>.to_string()),
-    ID => ExprKind::Identifier(<>.to_string()),
-    "true" => ExprKind::Bool(true),
-    "false" => ExprKind::Bool(false),
+Term: UntypedExprKind = {
+    Number => UntypedExprKind::Number(<>.to_string()),
+    ID => UntypedExprKind::Identifier(<>.to_string()),
+    "true" => UntypedExprKind::Bool(true),
+    "false" => UntypedExprKind::Bool(false),
     "(" <Expr> ")",
 };
 
-Block: ExprKind = {
-    "{" <ExpressionSequence> "}" =>  ExprKind::Block(<>),
+Block: UntypedExprKind = {
+    "{" <ExpressionSequence> "}" =>  UntypedExprKind::Block(<>),
 };
 
-ExpressionSequence: Vec<SpExpr> = {
+ExpressionSequence: Vec<UntypedSpExpr> = {
     <mut v:ExpressionSequence> ";" <e:Sp<Expr>> => {
         v.push(e);
         v
@@ -87,6 +84,6 @@ ExpressionSequence: Vec<SpExpr> = {
     Sp<Expr> => vec![<>],
 };
 
-IfExpr: ExprKind = {
-    "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => ExprKind::If(c, t, f),
+IfExpr: UntypedExprKind = {
+    "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
 }

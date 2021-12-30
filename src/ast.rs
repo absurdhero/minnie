@@ -4,44 +4,57 @@ use crate::span::Span;
 use std::ops::Range;
 use thiserror::Error;
 
+///! This module is responsible for parsing source code into a validated AST
+///! for later consumption by the compiler module.
+
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, Span<AstError>>;
 pub type ErrorRecovery<'input> = lalrpop_util::ErrorRecovery<usize, Token<'input>, Span<AstError>>;
 
-pub type SpExpr = Span<Box<Expr>>;
+/// Untyped Spanned syntax tree
+pub type UntypedSpExpr = Span<Box<UntypedExpr>>;
+pub type UntypedExprKind = ExprKind<UntypedSpExpr>;
 
-impl PartialEq for SpExpr {
+// wrapper type to break cyclic type definition above
+#[derive(Debug, PartialEq, Eq)]
+pub struct UntypedExpr {
+    kind: UntypedExprKind,
+}
+
+impl From<UntypedExprKind> for UntypedExpr {
+    fn from(k: UntypedExprKind) -> Self {
+        UntypedExpr { kind: k }
+    }
+}
+
+/// Typed Spanned syntax tree
+pub type TypedSpExpr = Span<Box<Expr>>;
+pub type TypedExprKind = ExprKind<TypedSpExpr>;
+
+impl PartialEq for TypedSpExpr {
     fn eq(&self, other: &Self) -> bool {
         self.kind == other.kind && self.ty == other.ty
     }
 }
-impl Eq for SpExpr {}
+impl Eq for TypedSpExpr {}
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum AstError {
-    #[error("{msg}")]
-    Error { msg: String },
-    #[error("expected {expected:?} but found {found:?}")]
-    TypeError { expected: Type, found: Type },
-    #[error("unknown type")]
-    UnknownTypeError,
-    #[error("unrecognized EOF")]
-    UnrecognizedEOF,
-    #[error("unexpected token \"{0}\". Expected one of: {1:?}")]
-    UnexpectedToken(String, Vec<String>),
-    #[error(transparent)]
-    LexError(#[from] LexError),
+impl PartialEq for UntypedSpExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.item == other.item
+    }
 }
+impl Eq for UntypedSpExpr {}
 
+/// ExprKind is used to build trees of untyped and typed expressions
 #[derive(Debug, PartialEq, Eq)]
-pub enum ExprKind {
+pub enum ExprKind<T> {
     Error(Option<Type>),
     Identifier(String),
     Number(String),
     Bool(bool),
-    Negate(SpExpr),
-    Op(SpExpr, Opcode, SpExpr),
-    If(SpExpr, SpExpr, SpExpr),
-    Block(Vec<SpExpr>),
+    Negate(T),
+    Op(T, Opcode, T),
+    If(T, T, T),
+    Block(Vec<T>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,67 +72,141 @@ pub enum Type {
     Bool,
 }
 
+/// Typed Expression
 #[derive(Debug, PartialEq, Eq)]
 pub struct Expr {
-    pub kind: ExprKind,
+    pub kind: TypedExprKind,
     pub ty: Type,
 }
 
 impl Expr {
-    pub fn new(kind: ExprKind) -> Result<Box<Expr>, AstError> {
-        let ty = kind.infer_type()?;
-        Ok(Box::new(Expr { kind, ty }))
+    pub fn new(kind: TypedExprKind, ty: Type) -> Expr {
+        Expr { kind, ty }
     }
 }
 
-impl ExprKind {
-    pub fn infer_type(&self) -> Result<Type, AstError> {
+/// convert an untyped expr tree into one with type information
+impl From<UntypedExprKind> for Result<Box<Expr>, AstError> {
+    fn from(kind: UntypedExprKind) -> Self {
+        Ok(Box::new(kind.into_typed()?))
+    }
+}
+
+impl From<(Type, TypedSpExpr)> for Expr {
+    fn from((ty, sp): (Type, TypedSpExpr)) -> Self {
+        Expr {
+            kind: sp.item.kind,
+            ty,
+        }
+    }
+}
+
+/// The Error type for anything that can go wrong during AST construction
+/// including lexing, parsing, and type errors.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum AstError {
+    #[error("{msg}")]
+    Error { msg: String },
+    #[error("expected {expected:?} but found {found:?}")]
+    TypeError { expected: Type, found: Type },
+    #[error("unknown type")]
+    UnknownTypeError,
+    #[error("unrecognized EOF")]
+    UnrecognizedEOF,
+    #[error("unexpected token \"{0}\". Expected one of: {1:?}")]
+    UnexpectedToken(String, Vec<String>),
+    #[error(transparent)]
+    LexError(#[from] LexError),
+}
+
+impl From<Span<AstError>> for AstError {
+    fn from(s: Span<AstError>) -> Self {
+        s.item
+    }
+}
+
+impl UntypedSpExpr {
+    pub fn into_typed(self) -> Result<TypedSpExpr, Span<AstError>> {
+        let typed = self.item.kind.into_typed();
+        match typed {
+            Ok(e) => Ok((self.start, Box::new(e), self.end).into()),
+            Err(err) => Err((self.start, err, self.end).into()),
+        }
+    }
+}
+
+impl UntypedExprKind {
+    /// Converts an untyped tree into a typed one, catching type errors in the process.
+    pub fn into_typed(self) -> Result<Expr, AstError> {
         match self {
             // help the type checker recover from errors by letting the parser guess a type
-            ExprKind::Error(Some(t)) => Ok(*t),
+            ExprKind::Error(Some(t)) => Ok(Expr::new(TypedExprKind::Error(Some(t)), t)),
             ExprKind::Error(None) => Err(AstError::UnknownTypeError),
-            ExprKind::Number(_) => Ok(Type::Int64),
-            ExprKind::Bool(_) => Ok(Type::Bool),
-            ExprKind::Negate(e) => {
-                if let Expr {
-                    kind: _,
-                    ty: Type::Int64,
-                } = ***e
-                {
-                    Ok(Type::Int64)
-                } else {
-                    Err(type_error(Type::Int64, e))
+            ExprKind::Number(s) => Ok(Expr::new(TypedExprKind::Number(s), Type::Int64)),
+            ExprKind::Bool(b) => Ok(Expr::new(TypedExprKind::Bool(b), Type::Bool)),
+            ExprKind::Negate(e) => match e.into_typed() {
+                Ok(e) => {
+                    if e.ty == Type::Int64 {
+                        Ok(Expr::new(ExprKind::Negate(e), Type::Int64))
+                    } else {
+                        Err(type_error(Type::Int64, &e))
+                    }
                 }
-            }
-            ExprKind::Op(e1, _, e2) => {
+                Err(error) => Err(error.into()),
+            },
+            ExprKind::Op(e1, op, e2) => {
+                // TODO: we lose span information on the errors here.
+                // To solve this, errors need to be chainable or embedded in the AST
+                let e1 = e1.into_typed()?;
+                let e2 = e2.into_typed()?;
+                let ty = e1.ty;
                 if e1.ty != Type::Int64 {
-                    Err(type_error(Type::Int64, e1))
+                    Err(type_error(ty, &e1))
                 } else if e2.ty != Type::Int64 {
-                    Err(type_error(Type::Int64, e2))
+                    Err(type_error(ty, &e2))
                 } else {
-                    Ok(e1.ty)
+                    Ok(Expr::new(ExprKind::Op(e1, op, e2), ty))
                 }
             }
             ExprKind::If(c, t, f) => {
+                let c = c.into_typed()?;
+                let t = t.into_typed()?;
+                let f = f.into_typed()?;
+                let ty = t.ty;
                 if c.ty != Type::Bool {
-                    Err(type_error(Type::Bool, c))
+                    Err(type_error(Type::Bool, &c))
                 } else if t.ty == f.ty {
-                    Ok(t.ty)
+                    Ok(Expr::new(ExprKind::If(c, t, f), ty))
                 } else {
-                    Err(type_error(Type::Int64, f))
+                    Err(type_error(ty, &f))
                 }
             }
-            ExprKind::Block(v) => Ok(v[v.len() - 1].ty),
-            ExprKind::Identifier(_) => {
+            ExprKind::Block(exprs) => {
+                // This could preserve more errors by accumulating all errors in the block.
+                // The best way to do this might be to store AstError inside the Error node
+                // so we automatically build error tree in case of errors.
+                let mut typed_exprs = Vec::with_capacity(exprs.len());
+                for expr in exprs {
+                    match expr.into_typed() {
+                        Ok(e) => typed_exprs.push(e),
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+                let ty = typed_exprs[typed_exprs.len() - 1].ty;
+                Ok(Expr::new(ExprKind::Block(typed_exprs), ty))
+            }
+            ExprKind::Identifier(i) => {
                 // temporarily stub out Identifier types as Int64 so the parser can be tested.
-                Ok(Type::Int64)
+                Ok(Expr::new(ExprKind::Identifier(i), Type::Int64))
             }
         }
     }
+}
 
+impl UntypedExprKind {
     /// Create an ExprKind::Error(Some(Type)) from a TypeError.
     /// For all other error types, return ExprKind::Error(None).
-    pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> ExprKind {
+    pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> UntypedExprKind {
         match &error_recovery.error {
             ParseError::User {
                 error:
@@ -127,24 +214,24 @@ impl ExprKind {
                         item: AstError::TypeError { expected, .. },
                         ..
                     },
-            } => ExprKind::Error(Some(*expected)),
-            _ => ExprKind::Error(None),
+            } => UntypedExprKind::Error(Some(*expected)),
+            _ => UntypedExprKind::Error(None),
         }
     }
 }
 
-fn type_error(expected: Type, found: &Expr) -> AstError {
+fn type_error(expected: Type, found: &TypedSpExpr) -> AstError {
     AstError::TypeError {
         expected,
         found: found.ty,
     }
 }
 
-pub fn parse(program: &str) -> Result<SpExpr, Vec<Span<AstError>>> {
+pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
     let parser = grammar::ExpressionParser::new();
-    let result: Result<SpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
+    let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
     // convert lex errors into AstError
     let mut errors: Vec<Span<AstError>> = lexer
@@ -169,7 +256,14 @@ pub fn parse(program: &str) -> Result<SpExpr, Vec<Span<AstError>>> {
     match result {
         Ok(expr) => {
             if errors.is_empty() {
-                Ok(expr)
+                // do type checking if there are no parse errors
+                match expr.into_typed() {
+                    Ok(exp) => Ok(exp),
+                    Err(err) => {
+                        errors.push(err);
+                        Err(errors)
+                    }
+                }
             } else {
                 Err(errors)
             }
@@ -211,7 +305,7 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
 #[cfg(test)]
 mod tests {
     use crate::ast::parse;
-    use crate::ast::{AstError, Expr, ExprKind};
+    use crate::ast::{AstError, ExprKind, UntypedExpr};
     use crate::span::Span;
 
     impl PartialEq for Span<AstError> {
@@ -226,7 +320,7 @@ mod tests {
             Span {
                 start: 0,
                 end: 1,
-                item: Expr::new($e).unwrap(),
+                item: Box::new(UntypedExpr { kind: $e }),
             }
         };
     }
@@ -246,7 +340,7 @@ mod tests {
     macro_rules! parses {
         ($($lhs:expr => $rhs:expr)+) => {{
              $(
-                assert_eq!(Ok($rhs), parse($lhs).map(|b| b.item.kind));
+                assert_eq!($rhs.into_typed().unwrap().kind, parse($lhs).map(|b| b.item.kind).unwrap());
              )+
         }};
     }
