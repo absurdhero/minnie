@@ -2,7 +2,6 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use thiserror::Error;
-use wasmtime::ValType;
 
 use crate::ast;
 use crate::ast::{AstError, Expr, ExprKind, Opcode, Type};
@@ -35,10 +34,11 @@ pub struct ThunkSource {
 
 impl Type {
     /// map data types into their wasm format
-    pub fn wasm_type(&self) -> ValType {
+    pub fn wasm_type(&self) -> &'static str {
         match self {
-            Type::Int64 => ValType::I64,
-            Type::Bool => ValType::I32,
+            Type::Int64 => "i64",
+            Type::Bool => "i32",
+            Type::Void => "",
         }
     }
 }
@@ -144,6 +144,9 @@ impl<'a> Compiler {
             }
             ExprKind::Bool(false) => {
                 push!("i32.const 0")
+            }
+            ExprKind::Let(_i, _t, _e) => {
+                todo!()
             }
         }
     }

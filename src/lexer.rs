@@ -24,6 +24,10 @@ pub enum Token<'input> {
     Multiply,
     #[token("/")]
     Divide,
+    #[token("=")]
+    Eq,
+    #[token("let")]
+    Let,
     #[token("if")]
     If,
     #[token("else")]
@@ -40,6 +44,14 @@ pub enum Token<'input> {
     ParenEnd,
     #[token(";")]
     Semi,
+
+    // types
+    #[token(":")]
+    Colon,
+    #[token("int")]
+    Int,
+    #[token("bool")]
+    Bool,
 
     // token that represents lex errors
     #[error]
@@ -61,6 +73,8 @@ impl<'i> Display for Token<'i> {
             Token::Minus => "-",
             Token::Multiply => "*",
             Token::Divide => "/",
+            Token::Eq => "=",
+            Token::Let => "let",
             Token::If => "if",
             Token::Else => "else",
             Token::ID(s) => s,
@@ -69,6 +83,11 @@ impl<'i> Display for Token<'i> {
             Token::ParenStart => "(",
             Token::ParenEnd => ")",
             Token::Semi => ";",
+
+            Token::Colon => ":",
+            Token::Int => "int",
+            Token::Bool => "bool",
+
             // this is an unsatisfying string representation
             Token::Error => "<unhandled>",
             Token::Unexpected(s) => s,

@@ -1,4 +1,4 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode, Type};
 use crate::lexer::Token;
 use crate::span::Span;
 
@@ -15,15 +15,20 @@ extern {
         "-" => Token::Minus,
         "*" => Token::Multiply,
         "/" => Token::Divide,
+        "=" => Token::Eq,
         ";" => Token::Semi,
         "{" => Token::CurlyStart,
         "}" => Token::CurlyEnd,
         "(" => Token::ParenStart,
         ")" => Token::ParenEnd,
+        ":" => Token::Colon,
         "if" => Token::If,
+        "let" => Token::Let,
         "else" => Token::Else,
         "true" => Token::True,
         "false" => Token::False,
+        "int" => Token::Int,
+        "bool" => Token::Bool,
     }
 }
 
@@ -31,16 +36,86 @@ extern {
 Sp<Rule>: UntypedSpExpr =
     <l: @L> <rule: Rule> <r: @R> => (l, Box::new(rule.into()), r).into();
 
-// The root of the grammar
-pub Expression: UntypedSpExpr = {
-    Sp<Expr>
+// Root of the grammar
+pub Program: UntypedSpExpr = {
+    Sp<Sequence>
+}
+pub Sequence: UntypedExprKind = {
+    <mut v:MaybeStatements> => {
+        // if the program has just one statement, unwrap it.
+        if v.len() == 1 {
+            (*v.remove(0).item).into()
+        } else {
+            UntypedExprKind::Block(v)
+        }
+    }
 }
 
-/// The recursive inner Expr production
-pub Expr: UntypedExprKind = {
+// Statement grammar
+
+MaybeStatements: Vec<UntypedSpExpr> = {
+  Statements,
+  <mut v:Statements> <e:Sp<Expr>> => {v.push(e); v},
+  Sp<Expr> => vec![<>],
+  () => vec![],
+};
+
+Statements: Vec<UntypedSpExpr> = {
+    <mut v:Statements> <e:Sp<Statement>> => {
+        v.push(e);
+        v
+    },
+    Sp<Statement> => vec![<>],
+};
+
+Statement: UntypedExprKind = {
+  Let,
+  ExprStmtLike,
+  Block,
+};
+
+Let: UntypedExprKind = {
+    "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(i.to_string(), t, e),
+};
+
+Block: UntypedExprKind = {
+  "{" <MaybeStatements> "}" => UntypedExprKind::Block(<>),
+};
+
+// Type grammar
+
+MaybeTyAscription: Option<Type> = {
+    (":" <TySum>)?
+};
+
+MaybeInitExpr: Option<UntypedSpExpr> = {
+    ("=" <Sp<Expr>>)?
+};
+TySum: Type = {
+  ty,
+};
+
+ty: Type = {
+  TyPrim,
+  "(" ")" => Type::Void,
+};
+TyPrim: Type = {
+  "int" => Type::Int64,
+  "bool" => Type::Bool,
+};
+
+// Expression grammar
+
+// expressions that act as individual statements with their own delimiters (e.g. curly braces)
+ExprStmtLike: UntypedExprKind = {
+    IfExpr,
+    <Expr> ";",
+}
+
+/// A single expression yields a value and may recurse
+Expr: UntypedExprKind = {
     Sp<Expr> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
     Factor,
-    IfExpr,
 };
 
 ExprOp: Opcode = {
@@ -70,18 +145,6 @@ Term: UntypedExprKind = {
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
     "(" <Expr> ")",
-};
-
-Block: UntypedExprKind = {
-    "{" <ExpressionSequence> "}" =>  UntypedExprKind::Block(<>),
-};
-
-ExpressionSequence: Vec<UntypedSpExpr> = {
-    <mut v:ExpressionSequence> ";" <e:Sp<Expr>> => {
-        v.push(e);
-        v
-    },
-    Sp<Expr> => vec![<>],
 };
 
 IfExpr: UntypedExprKind = {

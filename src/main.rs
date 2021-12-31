@@ -206,20 +206,26 @@ mod tests {
     }
 
     #[test]
-    fn boolean() {
+    fn if_condition() {
         returns! {
             "if true {false} else {true}" => ReturnValue::Bool(false)
+            "if true {1} else {2}" => ReturnValue::Integer(1)
             "if false{1} else { 2 }" => ReturnValue::Integer(2)
+            "if false{ 1 } else {{2}}" => ReturnValue::Integer(2)
             "if true {1;true; 1+2} else {0;0}" => ReturnValue::Integer(3)
         }
     }
 
     #[test]
-    fn if_condition() {
+    fn blocks_and_sequences() {
         returns! {
-            "if true {1} else {2}" => ReturnValue::Integer(1)
-            "if false{1} else { 2 }" => ReturnValue::Integer(2)
-            "if true {1;true; 1+2} else {0;0}" => ReturnValue::Integer(3)
+            "{ if true {1} else {2} }" => ReturnValue::Integer(1)
+            "{{ if true {1} else {2} }}" => ReturnValue::Integer(1)
+            "2; true" => ReturnValue::Bool(true)
+            "if true { if false { 2 } else { 3 } } else {0;0}" => ReturnValue::Integer(3)
+
+            // Yielding a value despite a semicolon. Maybe not desirable.
+            "true;" => ReturnValue::Bool(true)
         }
     }
 }

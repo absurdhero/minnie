@@ -26,6 +26,12 @@ impl From<UntypedExprKind> for UntypedExpr {
     }
 }
 
+impl From<UntypedExpr> for UntypedExprKind {
+    fn from(e: UntypedExpr) -> Self {
+        e.kind
+    }
+}
+
 /// Typed Spanned syntax tree
 pub type TypedSpExpr = Span<Box<Expr>>;
 pub type TypedExprKind = ExprKind<TypedSpExpr>;
@@ -53,7 +59,10 @@ pub enum ExprKind<T> {
     Bool(bool),
     Negate(T),
     Op(T, Opcode, T),
+    // condition, then-arm, else-arm
     If(T, T, T),
+    // identifier, optional type, optional binding
+    Let(String, Option<Type>, Option<T>),
     Block(Vec<T>),
 }
 
@@ -70,6 +79,7 @@ pub enum Opcode {
 pub enum Type {
     Int64,
     Bool,
+    Void,
 }
 
 /// Typed Expression
@@ -192,12 +202,45 @@ impl UntypedExprKind {
                         Err(err) => return Err(err.into()),
                     }
                 }
-                let ty = typed_exprs[typed_exprs.len() - 1].ty;
+                let ty = if typed_exprs.is_empty() {
+                    Type::Void
+                } else {
+                    typed_exprs[typed_exprs.len() - 1].ty
+                };
                 Ok(Expr::new(ExprKind::Block(typed_exprs), ty))
             }
             ExprKind::Identifier(i) => {
-                // temporarily stub out Identifier types as Int64 so the parser can be tested.
-                Ok(Expr::new(ExprKind::Identifier(i), Type::Int64))
+                // TODO: look up the identifier's type from the lexical type env (e.g. `let foo;`)
+                // temporarily stub out Identifier types as Bool so the parser can be tested.
+                Ok(Expr::new(ExprKind::Identifier(i), Type::Bool))
+            }
+            ExprKind::Let(i, ty, e) => {
+                let e_typed = if let Some(e) = e {
+                    Some(e.into_typed()?)
+                } else {
+                    None
+                };
+
+                if let Some(ty) = ty {
+                    if let Some(e_ty) = e_typed {
+                        if ty != e_ty.ty {
+                            Err(type_error(ty, &e_ty))
+                        } else {
+                            Ok(Expr::new(ExprKind::Let(i, Some(ty), Some(e_ty)), ty))
+                        }
+                    } else {
+                        Ok(Expr::new(ExprKind::Let(i, Some(ty), e_typed), ty))
+                    }
+                } else if let Some(expr) = e_typed {
+                    let ty = expr.ty;
+                    Ok(Expr::new(ExprKind::Let(i, Some(ty), Some(expr)), ty))
+                } else {
+                    // TODO: support type inference when an identifier is defined and later assigned.
+                    Ok(Expr::new(
+                        ExprKind::Let(i, Some(Type::Void), e_typed),
+                        Type::Void,
+                    ))
+                }
             }
         }
     }
@@ -230,7 +273,8 @@ fn type_error(expected: Type, found: &TypedSpExpr) -> AstError {
 pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
-    let parser = grammar::ExpressionParser::new();
+
+    let parser = grammar::ProgramParser::new();
     let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
     // convert lex errors into AstError
@@ -327,7 +371,8 @@ mod tests {
 
     macro_rules! parse_ok {
         ($s:literal) => {
-            assert!(parse($s).is_ok())
+            let result = parse($s);
+            assert!(result.is_ok(), "error: {:?}", result)
         };
     }
 
@@ -414,5 +459,21 @@ mod tests {
         parse_fails!("true + 1");
         parse_fails!("1 + true");
         parse_fails!("true + true");
+    }
+
+    #[test]
+    fn block() {
+        parse_ok!("{ let foo = 1; }");
+        parse_ok!("{ let foo = 1; true }");
+        parse_ok!("{ if foo { 1 } else { 2 } }");
+    }
+
+    #[test]
+    fn lexical_let() {
+        parse_ok!("let foo = 1;");
+        parse_ok!("let foo: int = 1;");
+        parse_fails!("let foo = 1");
+
+        parse_ok!("let foo = true; if foo { 1 } else { 2 }");
     }
 }

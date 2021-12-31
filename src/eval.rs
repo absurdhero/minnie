@@ -25,6 +25,7 @@ pub struct Eval {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReturnValue {
+    Void,
     Integer(i64),
     Bool(bool),
 }
@@ -34,6 +35,7 @@ impl Display for ReturnValue {
         match self {
             ReturnValue::Integer(i) => write!(f, "{}", i),
             ReturnValue::Bool(b) => write!(f, "{}", b),
+            ReturnValue::Void => write!(f, "<void>"),
         }
     }
 }
@@ -69,6 +71,14 @@ impl Eval {
             .get_func(&mut self.store, "top_level")
             .expect("`top_level` was not an exported function");
 
+        if let Type::Void = thunk_source.return_type {
+            let result = top_level.call(&mut self.store, &[], &mut []);
+            return match result {
+                Ok(_) => Ok(ReturnValue::Void),
+                Err(trap) => Err(EvalError::from(trap)),
+            };
+        }
+
         let mut returns = [Val::I64(0)];
         let result = top_level.call(&mut self.store, &[], &mut returns);
 
@@ -90,6 +100,7 @@ impl Eval {
                             Err(EvalError::Any(anyhow::Error::msg("type mismatch")))
                         }
                     }
+                    Type::Void => unreachable!(),
                 }
             }
             Err(trap) => Err(EvalError::from(trap)),
