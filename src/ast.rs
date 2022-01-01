@@ -98,13 +98,6 @@ impl Expr {
     }
 }
 
-/// convert an untyped expr tree into one with type information
-impl From<UntypedExprKind> for Box<Expr> {
-    fn from(kind: UntypedExprKind) -> Self {
-        Box::new(kind.into_typed())
-    }
-}
-
 impl From<(Type, TypedSpExpr)> for Expr {
     fn from((ty, sp): (Type, TypedSpExpr)) -> Self {
         Expr {
@@ -120,7 +113,7 @@ impl From<(Type, TypedSpExpr)> for Expr {
 pub enum AstError {
     #[error("unrecognized EOF")]
     UnrecognizedEOF,
-    #[error("unexpected token \"{0}\". Expected one of: {1:?}")]
+    #[error("unexpected token `{0}`. Expected one of: {1:?}")]
     UnexpectedToken(String, Vec<String>),
     #[error(transparent)]
     LexError(#[from] LexError),
@@ -146,6 +139,8 @@ pub type TypedErrorNode = ErrorNode<TypedSpExpr>;
 pub enum ErrorNodeKind {
     #[error("expected {expected:?} but found {found:?}")]
     TypeMismatch { expected: Type, found: Type },
+    #[error("{0}")]
+    TypeError(&'static str),
     #[error("unknown type")]
     UnknownType,
     #[error(transparent)]
@@ -159,36 +154,32 @@ impl From<Span<AstError>> for AstError {
 }
 
 impl UntypedSpExpr {
-    pub fn into_typed(self) -> TypedSpExpr {
-        let typed = self.item.kind.into_typed();
-        (self.start, Box::new(typed), self.end).into()
-    }
-}
-
-impl UntypedExprKind {
     /// Converts an untyped tree into a typed one, catching type errors in the process.
-    pub fn into_typed(self) -> Expr {
-        match self {
-            // help the type checker recover from errors by letting the parser guess a type
+    pub fn into_typed(self) -> TypedSpExpr {
+        let Span {
+            start,
+            end,
+            item: untyped_exp,
+        } = self;
+        let typed_kind = match untyped_exp.kind {
             ExprKind::Error(ErrorNode {
                 kind: err,
                 expr: node,
-            }) => match err {
-                ErrorNodeKind::TypeMismatch { expected, found: _ } => Expr::new(
-                    TypedExprKind::Error(ErrorNode {
-                        kind: err,
-                        expr: node.map(|n| n.into_typed()),
-                    }),
-                    expected,
-                ),
-                err_kind => Expr::new(
-                    TypedExprKind::Error(ErrorNode {
-                        kind: err_kind,
-                        expr: node.map(|n| n.into_typed()),
-                    }),
-                    Type::Unknown,
-                ),
-            },
+            }) => {
+                let typed_err_node = ErrorNode {
+                    kind: err,
+                    expr: node.map(|n| n.into_typed()),
+                };
+                match typed_err_node.kind {
+                    // if the parser returns a TypeMismatch with an expected type,
+                    // the type checker can use that to recover.
+                    ErrorNodeKind::TypeMismatch { expected, found: _ } => {
+                        Expr::new(TypedExprKind::Error(typed_err_node), expected)
+                    }
+                    // Otherwise, set the expression's type to Unknown.
+                    _ => Expr::new(TypedExprKind::Error(typed_err_node), Type::Unknown),
+                }
+            }
             ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
             ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
             ExprKind::Negate(e) => {
@@ -219,7 +210,11 @@ impl UntypedExprKind {
                     c = type_error_correction(Type::Bool, c)
                 }
                 if f.ty != return_ty {
-                    f = type_error_correction(return_ty, f)
+                    f = type_error_correction(return_ty, f);
+                    return type_error_annotation(
+                        TypedSpExpr::new(start, end, ExprKind::If(c, t, f), return_ty),
+                        "the branches of this `if` condition have mismatched return types",
+                    );
                 }
                 Expr::new(ExprKind::If(c, t, f), return_ty)
             }
@@ -258,9 +253,12 @@ impl UntypedExprKind {
                     Expr::new(ExprKind::Let(i, Some(Type::Void), binding), Type::Void)
                 }
             }
-        }
+        };
+        (self.start, Box::new(typed_kind), self.end).into()
     }
+}
 
+impl UntypedExprKind {
     // called by the lalrpop grammar to record recovery actions
     pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> UntypedExprKind {
         UntypedExprKind::Error(ErrorNode {
@@ -288,7 +286,30 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
     }
 }
 
+fn type_error_annotation(expr: TypedSpExpr, msg: &'static str) -> TypedSpExpr {
+    let ty = expr.ty.clone();
+    Span {
+        start: expr.start,
+        end: expr.end,
+        item: Box::new(Expr {
+            kind: ExprKind::Error(ErrorNode {
+                kind: ErrorNodeKind::TypeError(msg),
+                expr: Some(expr),
+            }),
+            ty,
+        }),
+    }
+}
+
 impl TypedSpExpr {
+    fn new(start: usize, end: usize, expr: ExprKind<TypedSpExpr>, ty: Type) -> TypedSpExpr {
+        Span {
+            start,
+            end,
+            item: Box::new(Expr { kind: expr, ty }),
+        }
+    }
+
     /// Get a list of the errors encountered when descending the tree.
     ///
     /// Errors are returned in bottom-up order except when roots_only
