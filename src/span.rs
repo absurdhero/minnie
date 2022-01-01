@@ -25,6 +25,12 @@ impl<T> From<&Span<T>> for Range<usize> {
     }
 }
 
+impl<T> Span<T> {
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+}
+
 /// If T can be cloned, so can its Span
 impl<T> Clone for Span<T>
 where

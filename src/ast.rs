@@ -1,6 +1,7 @@
 use crate::grammar;
 use crate::lexer::{LexError, Lexer, Token};
 use crate::span::Span;
+use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
 
@@ -53,7 +54,7 @@ impl Eq for UntypedSpExpr {}
 /// ExprKind is used to build trees of untyped and typed expressions
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExprKind<T> {
-    Identifier(String),
+    Identifier(ID),
     Number(String),
     Bool(bool),
     Negate(T),
@@ -62,9 +63,32 @@ pub enum ExprKind<T> {
     // condition, then-arm, else-arm
     If(T, T, T),
     // identifier, optional type, optional binding
-    Let(String, Option<Type>, Option<T>),
+    Let(ID, Option<Type>, Option<T>),
     // The error and the original node (if present)
     Error(ErrorNode<T>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ID {
+    Name(String),
+    Id(usize),
+}
+impl ID {
+    // unsafe accessors used in distinct AST phases.
+    pub fn name(&self) -> &String {
+        if let ID::Name(name) = self {
+            name
+        } else {
+            panic!("accessed textual ID on resolved numeric ID");
+        }
+    }
+    pub fn id(&self) -> usize {
+        if let ID::Id(id) = self {
+            *id
+        } else {
+            panic!("accessed numeric ID on unresolved textual ID");
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -141,8 +165,8 @@ pub enum ErrorNodeKind {
     TypeMismatch { expected: Type, found: Type },
     #[error("{0}")]
     TypeError(&'static str),
-    #[error("unknown type")]
-    UnknownType,
+    #[error("unknown identifier `{0}`")]
+    UnknownIdentifier(String),
     #[error(transparent)]
     ParseError(AstError),
 }
@@ -155,7 +179,7 @@ impl From<Span<AstError>> for AstError {
 
 impl UntypedSpExpr {
     /// Converts an untyped tree into a typed one, catching type errors in the process.
-    pub fn into_typed(self) -> TypedSpExpr {
+    pub fn into_typed(self, lexical_env: &mut LexicalEnv) -> TypedSpExpr {
         let Span {
             start,
             end,
@@ -168,7 +192,7 @@ impl UntypedSpExpr {
             }) => {
                 let typed_err_node = ErrorNode {
                     kind: err,
-                    expr: node.map(|n| n.into_typed()),
+                    expr: node.map(|n| n.into_typed(lexical_env)),
                 };
                 match typed_err_node.kind {
                     // if the parser returns a TypeMismatch with an expected type,
@@ -183,15 +207,15 @@ impl UntypedSpExpr {
             ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
             ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
             ExprKind::Negate(e) => {
-                let mut e = e.into_typed();
+                let mut e = e.into_typed(lexical_env);
                 if e.ty != Type::Int64 {
                     e = type_error_correction(Type::Int64, e);
                 }
                 Expr::new(ExprKind::Negate(e), Type::Int64)
             }
             ExprKind::Op(e1, op, e2) => {
-                let mut e1 = e1.into_typed();
-                let mut e2 = e2.into_typed();
+                let mut e1 = e1.into_typed(lexical_env);
+                let mut e2 = e2.into_typed(lexical_env);
                 let expected = Type::Int64;
                 if e1.ty != Type::Int64 {
                     e1 = type_error_correction(expected, e1);
@@ -202,9 +226,9 @@ impl UntypedSpExpr {
                 Expr::new(ExprKind::Op(e1, op, e2), expected)
             }
             ExprKind::If(c, t, f) => {
-                let mut c = c.into_typed();
-                let t = t.into_typed();
-                let mut f = f.into_typed();
+                let mut c = c.into_typed(lexical_env);
+                let t = t.into_typed(lexical_env);
+                let mut f = f.into_typed(lexical_env);
                 let return_ty = t.ty;
                 if c.ty != Type::Bool {
                     c = type_error_correction(Type::Bool, c)
@@ -219,8 +243,11 @@ impl UntypedSpExpr {
                 Expr::new(ExprKind::If(c, t, f), return_ty)
             }
             ExprKind::Block(exprs) => {
-                let typed_exprs: Vec<TypedSpExpr> =
-                    exprs.into_iter().map(UntypedSpExpr::into_typed).collect();
+                let mut block_env = LexicalEnv::new(lexical_env);
+                let typed_exprs: Vec<TypedSpExpr> = exprs
+                    .into_iter()
+                    .map(|e| e.into_typed(&mut block_env))
+                    .collect();
                 let ty = if typed_exprs.is_empty() {
                     Type::Void
                 } else {
@@ -229,28 +256,51 @@ impl UntypedSpExpr {
                 Expr::new(ExprKind::Block(typed_exprs), ty)
             }
             ExprKind::Identifier(i) => {
-                // TODO: look up the identifier's type from the lexical type env (e.g. `let foo;`)
-                // temporarily stub out Identifier types as Bool so the parser can be tested.
-                Expr::new(ExprKind::Identifier(i), Type::Bool)
+                if let Some((id, ty)) = lexical_env.id_type(i.name()) {
+                    Expr::new(ExprKind::Identifier(id), ty)
+                } else {
+                    return type_error(
+                        ErrorNode {
+                            kind: ErrorNodeKind::UnknownIdentifier(i.name().clone()),
+                            expr: Some(TypedSpExpr::new(
+                                start,
+                                end,
+                                ExprKind::Identifier(i),
+                                Type::Unknown,
+                            )),
+                        },
+                        start..end,
+                        Type::Unknown,
+                    );
+                }
             }
-            ExprKind::Let(i, ty, e) => {
-                let binding = e.map(|e| e.into_typed());
+            ExprKind::Let(id, ty, e) => {
+                let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
+                    let uid = lexical_env.add(id.name(), ty);
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
                             bind_expr = type_error_correction(ty, bind_expr)
                         }
-                        Expr::new(ExprKind::Let(i, Some(ty), Some(bind_expr)), ty)
+                        Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), ty)
                     } else {
-                        Expr::new(ExprKind::Let(i, Some(ty), binding), ty)
+                        Expr::new(ExprKind::Let(uid, Some(ty), binding), ty)
                     }
                 } else if let Some(expr) = binding {
                     let ty = expr.ty;
-                    Expr::new(ExprKind::Let(i, Some(ty), Some(expr)), ty)
+                    let uid = lexical_env.add(id.name(), ty);
+                    Expr::new(ExprKind::Let(uid, Some(ty), Some(expr)), ty)
                 } else {
-                    // TODO: support type inference when an identifier is defined and later assigned.
-                    Expr::new(ExprKind::Let(i, Some(Type::Void), binding), Type::Void)
+                    return type_error_annotation(
+                        TypedSpExpr::new(
+                            start,
+                            end,
+                            ExprKind::Let(id, Some(Type::Void), binding),
+                            Type::Unknown,
+                        ),
+                        "Not supported: untyped `let` with no binding.",
+                    );
                 }
             }
         };
@@ -268,37 +318,43 @@ impl UntypedExprKind {
     }
 }
 
-fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
+fn type_error(error: TypedErrorNode, span: Range<usize>, new_type: Type) -> TypedSpExpr {
     Span {
-        start: found.start,
-        end: found.end,
+        start: span.start,
+        end: span.end,
         item: Box::new(Expr {
-            kind: ExprKind::Error(ErrorNode {
-                kind: ErrorNodeKind::TypeMismatch {
-                    expected,
-                    found: found.ty,
-                },
-                expr: Some(found),
-            }),
-            // pretend that we got the expected type so we can press on with type analysis
-            ty: expected,
+            kind: ExprKind::Error(error),
+            ty: new_type,
         }),
     }
 }
 
+fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
+    let range = found.range();
+    type_error(
+        ErrorNode {
+            kind: ErrorNodeKind::TypeMismatch {
+                expected,
+                found: found.ty,
+            },
+            expr: Some(found),
+        },
+        range,
+        expected,
+    )
+}
+
 fn type_error_annotation(expr: TypedSpExpr, msg: &'static str) -> TypedSpExpr {
-    let ty = expr.ty.clone();
-    Span {
-        start: expr.start,
-        end: expr.end,
-        item: Box::new(Expr {
-            kind: ExprKind::Error(ErrorNode {
-                kind: ErrorNodeKind::TypeError(msg),
-                expr: Some(expr),
-            }),
-            ty,
-        }),
-    }
+    let ty = expr.ty;
+    let range = expr.range();
+    type_error(
+        ErrorNode {
+            kind: ErrorNodeKind::TypeError(msg),
+            expr: Some(expr),
+        },
+        range,
+        ty,
+    )
 }
 
 impl TypedSpExpr {
@@ -360,6 +416,12 @@ impl TypedSpExpr {
     }
 }
 
+impl<T> ExprKind<T> {
+    pub fn is_expression(&self) -> bool {
+        !matches!(self, ExprKind::Let(_, _, _) | ExprKind::Error(_))
+    }
+}
+
 pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
@@ -391,7 +453,8 @@ pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
         Ok(expr) => {
             if errors.is_empty() {
                 // do type checking if there are no parse errors
-                Ok(expr.into_typed())
+                let mut env = LexicalEnv::new_root();
+                Ok(expr.into_typed(&mut env))
             } else {
                 Err(errors)
             }
@@ -430,10 +493,49 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
     .into()
 }
 
+pub struct LexicalEnv<'a> {
+    // association of symbol to its unique ID and type
+    bindings: HashMap<String, (ID, Type)>,
+    parent: Option<&'a LexicalEnv<'a>>,
+}
+
+impl<'a> LexicalEnv<'a> {
+    fn new(parent: &'a LexicalEnv) -> LexicalEnv<'a> {
+        LexicalEnv {
+            bindings: HashMap::new(),
+            parent: Some(parent),
+        }
+    }
+
+    fn new_root() -> LexicalEnv<'a> {
+        LexicalEnv {
+            bindings: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    fn add(&mut self, name: &str, ty: Type) -> ID {
+        let new_id = ID::Id(self.next_id());
+        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+        new_id
+    }
+
+    fn next_id(&self) -> usize {
+        self.bindings.len() + self.parent.map_or(0, |p| p.next_id())
+    }
+
+    fn id_type(&self, name: &str) -> Option<(ID, Type)> {
+        self.bindings
+            .get(name)
+            .cloned()
+            .or_else(|| self.parent.and_then(|p| p.id_type(name)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::ast::parse;
-    use crate::ast::{AstError, ExprKind, UntypedExpr};
+    use crate::ast::{parse, UntypedExprKind, UntypedSpExpr};
+    use crate::ast::{AstError, ExprKind, LexicalEnv, UntypedExpr, ID};
     use crate::span::Span;
 
     impl PartialEq for Span<AstError> {
@@ -442,6 +544,12 @@ mod tests {
         }
     }
     impl Eq for Span<AstError> {}
+
+    impl From<UntypedExprKind> for UntypedSpExpr {
+        fn from(k: UntypedExprKind) -> Self {
+            (0, Box::new(UntypedExpr::from(k)), 0).into()
+        }
+    }
 
     macro_rules! expr {
         ($e:expr) => {
@@ -457,10 +565,13 @@ mod tests {
         ($s:literal) => {
             let result = parse($s);
             assert!(result.is_ok(), "error: {:?}", result);
+            let parse_result = parse($s).unwrap();
+            let error = parse_result.errors(true).next();
             assert!(
-                parse($s).unwrap().errors(true).next().is_none(),
-                "error expected but parse succeeded: {:?}",
-                $s
+                error.is_none(),
+                "parse error in: {:?}: {:#?}",
+                $s,
+                error.unwrap()
             );
         };
     }
@@ -483,8 +594,9 @@ mod tests {
 
     macro_rules! parses {
         ($($lhs:expr => $rhs:expr)+) => {{
+            let mut env = LexicalEnv::new_root();
              $(
-                assert_eq!($rhs.into_typed().kind, parse($lhs).map(|b| b.item.kind).unwrap());
+                assert_eq!(UntypedSpExpr::from($rhs).into_typed(&mut env).kind, parse($lhs).map(|b| b.item.kind).unwrap());
              )+
         }};
     }
@@ -515,9 +627,9 @@ mod tests {
     #[test]
     fn identifiers() {
         parses! {
-            "abc" => ExprKind::Identifier("abc".to_string())
-            "a" => ExprKind::Identifier("a".to_string())
-            "a123" => ExprKind::Identifier("a123".to_string())
+            "abc" => ExprKind::Identifier(ID::Name("abc".to_string()))
+            "a" => ExprKind::Identifier(ID::Name("a".to_string()))
+            "a123" => ExprKind::Identifier(ID::Name("a123".to_string()))
         };
         parse_fails!("Caps");
     }
@@ -562,18 +674,30 @@ mod tests {
     }
 
     #[test]
-    fn block() {
+    fn lexical_block() {
         parse_ok!("{ let foo = 1; }");
         parse_ok!("{ let foo = 1; true }");
-        parse_ok!("{ if foo { 1 } else { 2 } }");
+        parse_ok!("{ if true { let foo = 1; foo } else { 2 } }");
+        parse_ok!("{{ let foo = 1;} { 1 } }");
+
+        // foo not defined in scope
+        ast_error!("{ if foo { 1 } else { 2 } }");
+        ast_error!("{ if true { let foo = 1; foo } else { foo } }");
+        ast_error!("{{ let foo = 1;} { foo } }");
     }
 
     #[test]
     fn lexical_let() {
         parse_ok!("let foo = 1;");
         parse_ok!("let foo: int = 1;");
+        // missing semicolon
         parse_fails!("let foo = 1");
 
+        // test type inference
         parse_ok!("let foo = true; if foo { 1 } else { 2 }");
+        parse_ok!("let foo = 1; if true { foo } else { 2 }");
+
+        parse_ok!("let foo:int = 1; foo");
+        ast_error!("let foo:bool = 1; foo");
     }
 }

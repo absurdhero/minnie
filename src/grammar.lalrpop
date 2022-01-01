@@ -1,4 +1,4 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode, Type};
+use crate::ast::{AstError, ID, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode, Type};
 use crate::lexer::Token;
 use crate::span::Span;
 
@@ -75,7 +75,7 @@ Statement: UntypedExprKind = {
 };
 
 Let: UntypedExprKind = {
-    "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(i.to_string(), t, e),
+    "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
 };
 
 Block: UntypedExprKind = {
@@ -141,7 +141,7 @@ UnaryTerm: UntypedExprKind = {
 
 Term: UntypedExprKind = {
     Number => UntypedExprKind::Number(<>.to_string()),
-    ID => UntypedExprKind::Identifier(<>.to_string()),
+    ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
     "(" <Expr> ")",

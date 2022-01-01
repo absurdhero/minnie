@@ -1,5 +1,9 @@
 #[macro_use]
 extern crate lalrpop_util;
+#[macro_use]
+extern crate log;
+
+extern crate pretty_env_logger;
 
 use std::fs;
 
@@ -35,6 +39,8 @@ struct CliOptions {
 /// Parses arguments and either executes a file or presents an interactive prompt
 fn main() -> Result<()> {
     let opts = CliOptions::parse_args_default_or_exit();
+
+    pretty_env_logger::init();
 
     let files: Vec<String> = opts.files;
     let mut interactive: bool = opts.interactive;

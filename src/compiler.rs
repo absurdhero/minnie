@@ -94,8 +94,11 @@ impl<'a> Compiler {
             return Err(ast_errors);
         }
 
+        trace!("ast:\n{:?}\n", expr.item.kind);
+
         let mut instructions: Vec<String> = vec![];
         self.codegen(&*expr, &mut instructions);
+        trace!("instructions:\n{:?}", instructions);
 
         let header = format!(
             r#"
@@ -120,10 +123,12 @@ impl<'a> Compiler {
     fn codegen(&self, expr: &Expr, instructions: &mut Vec<String>) {
         macro_rules! push {
             // convert literals into String
+            // e.g: `push!("literal instruction")`
             ($s:literal) => {
                 instructions.push($s.to_string())
             };
             // treat multiple args as a format string with args
+            // e.g: `push!("formatted {}", substitution)`
             ($s:literal, $($arg:tt)+) => {
                 instructions.push(format!($s, $($arg)+))
             };
@@ -137,8 +142,8 @@ impl<'a> Compiler {
                 panic!("encountered an ErrorNode in codegen")
             }
             ExprKind::Number(n) => push!("i64.const {}", n),
-            ExprKind::Identifier(_id) => {
-                todo!()
+            ExprKind::Identifier(id) => {
+                push!("local.get ${}", id.id())
             }
             ExprKind::Negate(b) => match b.as_ref() {
                 Expr {
@@ -165,7 +170,9 @@ impl<'a> Compiler {
                 // execute and throw out the result of every expr but the last
                 for e in &v[0..(v.len() - 1)] {
                     self.codegen(e, instructions);
-                    push!("drop")
+                    if e.kind.is_expression() {
+                        push!("drop")
+                    }
                 }
                 self.codegen(&v[v.len() - 1], instructions);
             }
@@ -183,8 +190,12 @@ impl<'a> Compiler {
             ExprKind::Bool(false) => {
                 push!("i32.const 0")
             }
-            ExprKind::Let(_i, _t, _e) => {
-                todo!()
+            ExprKind::Let(id, t, e) => {
+                push!("(local ${} {})", id.id(), t.unwrap().wasm_type());
+                if let Some(e) = e {
+                    self.codegen(e, instructions);
+                }
+                push!("local.set ${}", id.id());
             }
         }
     }
