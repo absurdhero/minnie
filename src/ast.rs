@@ -283,21 +283,21 @@ impl UntypedSpExpr {
                         if ty != bind_expr.ty {
                             bind_expr = type_error_correction(ty, bind_expr)
                         }
-                        Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), ty)
+                        Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), Type::Void)
                     } else {
-                        Expr::new(ExprKind::Let(uid, Some(ty), binding), ty)
+                        Expr::new(ExprKind::Let(uid, Some(ty), binding), Type::Void)
                     }
                 } else if let Some(expr) = binding {
                     let ty = expr.ty;
                     let uid = lexical_env.add(id.name(), ty);
-                    Expr::new(ExprKind::Let(uid, Some(ty), Some(expr)), ty)
+                    Expr::new(ExprKind::Let(uid, Some(ty), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
                         TypedSpExpr::new(
                             start,
                             end,
                             ExprKind::Let(id, Some(Type::Void), binding),
-                            Type::Unknown,
+                            Type::Void,
                         ),
                         "Not supported: untyped `let` with no binding.",
                     );
@@ -454,7 +454,7 @@ impl TypedSpExpr {
                             if local.len() <= *id {
                                 local.resize(id + 1, Type::Unknown);
                             }
-                            local[*id] = ty;
+                            local[*id] = e.ty;
                         }
                         ID::Name(_) => {
                             panic!("local_identifiers called on an untransformed tree")

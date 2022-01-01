@@ -238,8 +238,10 @@ mod tests {
     #[test]
     fn lexical_let() {
         returns! {
+            "let foo = 1;" => ReturnValue::Void
             "let foo = 1; foo" => ReturnValue::Integer(1)
-            "let foo = 1; let bar = 2; foo" => ReturnValue::Integer(1)
+            "let foo = true; let bar = 2; foo" => ReturnValue::Bool(true)
+            "let foo = 1; let bar = false; foo" => ReturnValue::Integer(1)
             "let foo = 1; let bar = foo; foo" => ReturnValue::Integer(1)
             "let foo = true; let bar = if foo { 1 } else { 2  }; bar " => ReturnValue::Integer(1)
             // shadowing

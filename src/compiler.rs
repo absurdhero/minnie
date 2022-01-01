@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
+use log::Level;
 use thiserror::Error;
 
 use crate::ast;
@@ -94,7 +95,9 @@ impl<'a> Compiler {
             return Err(ast_errors);
         }
 
-        trace!("ast:\n{:?}\n", expr.item.kind);
+        if log_enabled!(Level::Trace) {
+            trace!("ast:\n{:#?}\n", expr.item.kind);
+        }
 
         let mut identifiers = vec![];
         let mut instructions: Vec<String> = vec![];
@@ -106,7 +109,10 @@ impl<'a> Compiler {
         }
 
         self.codegen(&*expr, &mut instructions);
-        trace!("instructions:\n{:?}", instructions);
+
+        if log_enabled!(Level::Trace) {
+            trace!("instructions:\n{:?}", instructions);
+        }
 
         let header = format!(
             r#"
