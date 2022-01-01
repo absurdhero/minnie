@@ -1,6 +1,7 @@
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use std::ops::Range;
 
 use crate::{CompilerError, ErrorType};
 
@@ -48,7 +49,8 @@ impl ErrorReporting {
                     labels.push(Label::primary((), s.clone()).with_message(primary.to_string()));
                     for secondary in remaining {
                         labels.push(
-                            Label::secondary((), s.clone()).with_message(secondary.to_string()),
+                            Label::secondary((), Range::from(secondary))
+                                .with_message(secondary.to_string()),
                         )
                     }
                 }
