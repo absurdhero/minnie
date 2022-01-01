@@ -96,7 +96,15 @@ impl<'a> Compiler {
 
         trace!("ast:\n{:?}\n", expr.item.kind);
 
+        let mut identifiers = vec![];
         let mut instructions: Vec<String> = vec![];
+
+        // declare locals
+        expr.local_identifiers(&mut identifiers);
+        for (id, ty) in identifiers.iter().enumerate() {
+            instructions.push(format!("(local ${} {})", id, ty.wasm_type()))
+        }
+
         self.codegen(&*expr, &mut instructions);
         trace!("instructions:\n{:?}", instructions);
 
@@ -190,8 +198,7 @@ impl<'a> Compiler {
             ExprKind::Bool(false) => {
                 push!("i32.const 0")
             }
-            ExprKind::Let(id, t, e) => {
-                push!("(local ${} {})", id.id(), t.unwrap().wasm_type());
+            ExprKind::Let(id, _t, e) => {
                 if let Some(e) = e {
                     self.codegen(e, instructions);
                 }

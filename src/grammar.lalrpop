@@ -89,8 +89,11 @@ MaybeTyAscription: Option<Type> = {
 };
 
 MaybeInitExpr: Option<UntypedSpExpr> = {
-    ("=" <Sp<Expr>>)?
+    ("=" <Sp<Expr>>)?,
+    ("=" <Sp<IfExpr>>) => Some(<>),
+    ("=" <Sp<Block>>) => Some(<>),
 };
+
 TySum: Type = {
   ty,
 };

@@ -396,8 +396,8 @@ impl TypedSpExpr {
                 Box::new(std::iter::empty())
             }
             TypedExprKind::Negate(e) => e.errors(roots_only),
-            TypedExprKind::Op(a, _, b) => {
-                Box::new(a.errors(roots_only).chain(b.errors(roots_only)))
+            TypedExprKind::Op(l, _, r) => {
+                Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
             }
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
@@ -412,6 +412,58 @@ impl TypedSpExpr {
                 .iter()
                 .map(|expr| expr.errors(roots_only))
                 .fold(Box::new(std::iter::empty()), |i, b| Box::new(i.chain(b))),
+        }
+    }
+
+    /// Find locally bound identifiers and place their Type in a vector indexed by their ID number
+    pub fn local_identifiers(&self, local: &mut Vec<Type>) {
+        let ty = self.ty;
+        match &self.kind {
+            TypedExprKind::Identifier(id) => match id {
+                ID::Id(id) => {
+                    if local.len() <= *id {
+                        local.resize(id + 1, Type::Unknown);
+                    }
+                    local[*id] = ty;
+                }
+                ID::Name(_) => {
+                    panic!("local_identifiers called on an untransformed tree")
+                }
+            },
+            TypedExprKind::Negate(e) => e.local_identifiers(local),
+            TypedExprKind::Op(l, _, r) => {
+                l.local_identifiers(local);
+                r.local_identifiers(local)
+            }
+            TypedExprKind::Block(exprs) => {
+                for e in exprs {
+                    e.local_identifiers(local);
+                }
+            }
+            TypedExprKind::If(c, t, f) => {
+                c.local_identifiers(local);
+                t.local_identifiers(local);
+                f.local_identifiers(local)
+            }
+            TypedExprKind::Let(id, _, e) => {
+                if let Some(e) = e {
+                    // for `let id = expr`, the id is accessed while binding.
+                    // Dead store elimination would obviate this need.
+                    match id {
+                        ID::Id(id) => {
+                            if local.len() <= *id {
+                                local.resize(id + 1, Type::Unknown);
+                            }
+                            local[*id] = ty;
+                        }
+                        ID::Name(_) => {
+                            panic!("local_identifiers called on an untransformed tree")
+                        }
+                    }
+                    e.local_identifiers(local);
+                }
+            }
+            _ => {}
         }
     }
 }

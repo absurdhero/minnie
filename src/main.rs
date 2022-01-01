@@ -234,4 +234,16 @@ mod tests {
             "true;" => ReturnValue::Bool(true)
         }
     }
+
+    #[test]
+    fn lexical_let() {
+        returns! {
+            "let foo = 1; foo" => ReturnValue::Integer(1)
+            "let foo = 1; let bar = 2; foo" => ReturnValue::Integer(1)
+            "let foo = 1; let bar = foo; foo" => ReturnValue::Integer(1)
+            "let foo = true; let bar = if foo { 1 } else { 2  }; bar " => ReturnValue::Integer(1)
+            // shadowing
+            "let foo = 1; let bar = { let foo = 2; foo }; foo + bar " => ReturnValue::Integer(3)
+        }
+    }
 }
