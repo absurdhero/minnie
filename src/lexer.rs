@@ -57,6 +57,8 @@ pub enum Token<'input> {
     #[error]
     // skip whitespace
     #[regex(r"[ \t\n\f]+", logos::skip)]
+    // skip // comments
+    #[regex(r"//[^\r\n]*", logos::skip)]
     Error,
 
     // used to fabricate error tokens with a string for debugging
