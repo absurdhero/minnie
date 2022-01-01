@@ -61,6 +61,19 @@ impl<T> From<(usize, T, usize)> for Span<T> {
     }
 }
 
+impl<T> Span<T> {
+    pub fn map<B, F>(&self, f: F) -> Span<B>
+    where
+        F: FnOnce(&T) -> B,
+    {
+        Span {
+            start: self.start,
+            end: self.end,
+            item: f(&self.item),
+        }
+    }
+}
+
 /// Forward Display to the inner type
 impl<T> fmt::Display for Span<T>
 where

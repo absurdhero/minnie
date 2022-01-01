@@ -5,7 +5,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 ///! This module is responsible for parsing source code into a validated AST
-///! for later consumption by the compiler module.
+///! for consumption by the compiler module.
 
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, Span<AstError>>;
 pub type ErrorRecovery<'input> = lalrpop_util::ErrorRecovery<usize, Token<'input>, Span<AstError>>;
@@ -53,17 +53,18 @@ impl Eq for UntypedSpExpr {}
 /// ExprKind is used to build trees of untyped and typed expressions
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExprKind<T> {
-    Error(Option<Type>),
     Identifier(String),
     Number(String),
     Bool(bool),
     Negate(T),
     Op(T, Opcode, T),
+    Block(Vec<T>),
     // condition, then-arm, else-arm
     If(T, T, T),
     // identifier, optional type, optional binding
     Let(String, Option<Type>, Option<T>),
-    Block(Vec<T>),
+    // The error and the original node (if present)
+    Error(ErrorNode<T>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -80,6 +81,8 @@ pub enum Type {
     Int64,
     Bool,
     Void,
+    // can only exist in an AST that contains type errors
+    Unknown,
 }
 
 /// Typed Expression
@@ -96,9 +99,9 @@ impl Expr {
 }
 
 /// convert an untyped expr tree into one with type information
-impl From<UntypedExprKind> for Result<Box<Expr>, AstError> {
+impl From<UntypedExprKind> for Box<Expr> {
     fn from(kind: UntypedExprKind) -> Self {
-        Ok(Box::new(kind.into_typed()?))
+        Box::new(kind.into_typed())
     }
 }
 
@@ -115,18 +118,38 @@ impl From<(Type, TypedSpExpr)> for Expr {
 /// including lexing, parsing, and type errors.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AstError {
-    #[error("{msg}")]
-    Error { msg: String },
-    #[error("expected {expected:?} but found {found:?}")]
-    TypeError { expected: Type, found: Type },
-    #[error("unknown type")]
-    UnknownTypeError,
     #[error("unrecognized EOF")]
     UnrecognizedEOF,
     #[error("unexpected token \"{0}\". Expected one of: {1:?}")]
     UnexpectedToken(String, Vec<String>),
     #[error(transparent)]
     LexError(#[from] LexError),
+    // // this variant stores an AST that contains one or more ExprKind::Error.
+    // #[error("AST contains errors")]
+    // InvalidAST(TypedSpExpr),
+}
+
+/// Records recoverable parse errors that still allow the AST
+/// to be formed. It also tracks Type errors that occur
+/// while converting the AST into a typed AST.
+///
+/// The first element is the type of error.
+/// The second element is the AST node that this error applies to.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ErrorNode<T> {
+    pub kind: ErrorNodeKind,
+    pub expr: Option<T>,
+}
+pub type TypedErrorNode = ErrorNode<TypedSpExpr>;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ErrorNodeKind {
+    #[error("expected {expected:?} but found {found:?}")]
+    TypeMismatch { expected: Type, found: Type },
+    #[error("unknown type")]
+    UnknownType,
+    #[error(transparent)]
+    ParseError(AstError),
 }
 
 impl From<Span<AstError>> for AstError {
@@ -136,137 +159,183 @@ impl From<Span<AstError>> for AstError {
 }
 
 impl UntypedSpExpr {
-    pub fn into_typed(self) -> Result<TypedSpExpr, Span<AstError>> {
+    pub fn into_typed(self) -> TypedSpExpr {
         let typed = self.item.kind.into_typed();
-        match typed {
-            Ok(e) => Ok((self.start, Box::new(e), self.end).into()),
-            Err(err) => Err((self.start, err, self.end).into()),
-        }
+        (self.start, Box::new(typed), self.end).into()
     }
 }
 
 impl UntypedExprKind {
     /// Converts an untyped tree into a typed one, catching type errors in the process.
-    pub fn into_typed(self) -> Result<Expr, AstError> {
+    pub fn into_typed(self) -> Expr {
         match self {
             // help the type checker recover from errors by letting the parser guess a type
-            ExprKind::Error(Some(t)) => Ok(Expr::new(TypedExprKind::Error(Some(t)), t)),
-            ExprKind::Error(None) => Err(AstError::UnknownTypeError),
-            ExprKind::Number(s) => Ok(Expr::new(TypedExprKind::Number(s), Type::Int64)),
-            ExprKind::Bool(b) => Ok(Expr::new(TypedExprKind::Bool(b), Type::Bool)),
-            ExprKind::Negate(e) => match e.into_typed() {
-                Ok(e) => {
-                    if e.ty == Type::Int64 {
-                        Ok(Expr::new(ExprKind::Negate(e), Type::Int64))
-                    } else {
-                        Err(type_error(Type::Int64, &e))
-                    }
-                }
-                Err(error) => Err(error.into()),
+            ExprKind::Error(ErrorNode {
+                kind: err,
+                expr: node,
+            }) => match err {
+                ErrorNodeKind::TypeMismatch { expected, found: _ } => Expr::new(
+                    TypedExprKind::Error(ErrorNode {
+                        kind: err,
+                        expr: node.map(|n| n.into_typed()),
+                    }),
+                    expected,
+                ),
+                err_kind => Expr::new(
+                    TypedExprKind::Error(ErrorNode {
+                        kind: err_kind,
+                        expr: node.map(|n| n.into_typed()),
+                    }),
+                    Type::Unknown,
+                ),
             },
-            ExprKind::Op(e1, op, e2) => {
-                // TODO: we lose span information on the errors here.
-                // To solve this, errors need to be chainable or embedded in the AST
-                let e1 = e1.into_typed()?;
-                let e2 = e2.into_typed()?;
-                let ty = e1.ty;
-                if e1.ty != Type::Int64 {
-                    Err(type_error(ty, &e1))
-                } else if e2.ty != Type::Int64 {
-                    Err(type_error(ty, &e2))
-                } else {
-                    Ok(Expr::new(ExprKind::Op(e1, op, e2), ty))
+            ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
+            ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
+            ExprKind::Negate(e) => {
+                let mut e = e.into_typed();
+                if e.ty != Type::Int64 {
+                    e = type_error_correction(Type::Int64, e);
                 }
+                Expr::new(ExprKind::Negate(e), Type::Int64)
+            }
+            ExprKind::Op(e1, op, e2) => {
+                let mut e1 = e1.into_typed();
+                let mut e2 = e2.into_typed();
+                let expected = Type::Int64;
+                if e1.ty != Type::Int64 {
+                    e1 = type_error_correction(expected, e1);
+                }
+                if e2.ty != Type::Int64 {
+                    e2 = type_error_correction(expected, e2);
+                }
+                Expr::new(ExprKind::Op(e1, op, e2), expected)
             }
             ExprKind::If(c, t, f) => {
-                let c = c.into_typed()?;
-                let t = t.into_typed()?;
-                let f = f.into_typed()?;
-                let ty = t.ty;
+                let mut c = c.into_typed();
+                let t = t.into_typed();
+                let mut f = f.into_typed();
+                let return_ty = t.ty;
                 if c.ty != Type::Bool {
-                    Err(type_error(Type::Bool, &c))
-                } else if t.ty == f.ty {
-                    Ok(Expr::new(ExprKind::If(c, t, f), ty))
-                } else {
-                    Err(type_error(ty, &f))
+                    c = type_error_correction(Type::Bool, c)
                 }
+                if f.ty != return_ty {
+                    f = type_error_correction(return_ty, f)
+                }
+                Expr::new(ExprKind::If(c, t, f), return_ty)
             }
             ExprKind::Block(exprs) => {
-                // This could preserve more errors by accumulating all errors in the block.
-                // The best way to do this might be to store AstError inside the Error node
-                // so we automatically build error tree in case of errors.
-                let mut typed_exprs = Vec::with_capacity(exprs.len());
-                for expr in exprs {
-                    match expr.into_typed() {
-                        Ok(e) => typed_exprs.push(e),
-                        Err(err) => return Err(err.into()),
-                    }
-                }
+                let typed_exprs: Vec<TypedSpExpr> =
+                    exprs.into_iter().map(UntypedSpExpr::into_typed).collect();
                 let ty = if typed_exprs.is_empty() {
                     Type::Void
                 } else {
                     typed_exprs[typed_exprs.len() - 1].ty
                 };
-                Ok(Expr::new(ExprKind::Block(typed_exprs), ty))
+                Expr::new(ExprKind::Block(typed_exprs), ty)
             }
             ExprKind::Identifier(i) => {
                 // TODO: look up the identifier's type from the lexical type env (e.g. `let foo;`)
                 // temporarily stub out Identifier types as Bool so the parser can be tested.
-                Ok(Expr::new(ExprKind::Identifier(i), Type::Bool))
+                Expr::new(ExprKind::Identifier(i), Type::Bool)
             }
             ExprKind::Let(i, ty, e) => {
-                let e_typed = if let Some(e) = e {
-                    Some(e.into_typed()?)
-                } else {
-                    None
-                };
+                let binding = e.map(|e| e.into_typed());
 
                 if let Some(ty) = ty {
-                    if let Some(e_ty) = e_typed {
-                        if ty != e_ty.ty {
-                            Err(type_error(ty, &e_ty))
-                        } else {
-                            Ok(Expr::new(ExprKind::Let(i, Some(ty), Some(e_ty)), ty))
+                    if let Some(mut bind_expr) = binding {
+                        if ty != bind_expr.ty {
+                            bind_expr = type_error_correction(ty, bind_expr)
                         }
+                        Expr::new(ExprKind::Let(i, Some(ty), Some(bind_expr)), ty)
                     } else {
-                        Ok(Expr::new(ExprKind::Let(i, Some(ty), e_typed), ty))
+                        Expr::new(ExprKind::Let(i, Some(ty), binding), ty)
                     }
-                } else if let Some(expr) = e_typed {
+                } else if let Some(expr) = binding {
                     let ty = expr.ty;
-                    Ok(Expr::new(ExprKind::Let(i, Some(ty), Some(expr)), ty))
+                    Expr::new(ExprKind::Let(i, Some(ty), Some(expr)), ty)
                 } else {
                     // TODO: support type inference when an identifier is defined and later assigned.
-                    Ok(Expr::new(
-                        ExprKind::Let(i, Some(Type::Void), e_typed),
-                        Type::Void,
-                    ))
+                    Expr::new(ExprKind::Let(i, Some(Type::Void), binding), Type::Void)
                 }
             }
         }
     }
-}
 
-impl UntypedExprKind {
-    /// Create an ExprKind::Error(Some(Type)) from a TypeError.
-    /// For all other error types, return ExprKind::Error(None).
+    // called by the lalrpop grammar to record recovery actions
     pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> UntypedExprKind {
-        match &error_recovery.error {
-            ParseError::User {
-                error:
-                    Span {
-                        item: AstError::TypeError { expected, .. },
-                        ..
-                    },
-            } => UntypedExprKind::Error(Some(*expected)),
-            _ => UntypedExprKind::Error(None),
-        }
+        UntypedExprKind::Error(ErrorNode {
+            kind: ErrorNodeKind::ParseError(map_lalrpop_error(&error_recovery.error).item),
+            expr: None,
+        })
     }
 }
 
-fn type_error(expected: Type, found: &TypedSpExpr) -> AstError {
-    AstError::TypeError {
-        expected,
-        found: found.ty,
+fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
+    Span {
+        start: found.start,
+        end: found.end,
+        item: Box::new(Expr {
+            kind: ExprKind::Error(ErrorNode {
+                kind: ErrorNodeKind::TypeMismatch {
+                    expected,
+                    found: found.ty,
+                },
+                expr: Some(found),
+            }),
+            // pretend that we got the expected type so we can press on with type analysis
+            ty: expected,
+        }),
+    }
+}
+
+impl TypedSpExpr {
+    /// Get a list of the errors encountered when descending the tree.
+    ///
+    /// Errors are returned in bottom-up order except when roots_only
+    /// is set in which case they are returned in the order of the source text.
+    ///
+    /// # Arguments
+    /// * `roots_only` - Return only the shallowest, broadest errors. Useful for finding
+    ///    groups of related errors to report separately to the user.
+    pub fn errors<'a>(
+        &'a self,
+        roots_only: bool,
+    ) -> Box<dyn Iterator<Item = &'a TypedErrorNode> + 'a> {
+        match &self.kind {
+            TypedExprKind::Error(node) => match &node.expr {
+                None => Box::new(std::iter::once(node)),
+                Some(expr) => {
+                    if roots_only {
+                        Box::new(std::iter::once(node))
+                    } else {
+                        Box::new(
+                            expr.errors(roots_only)
+                                .chain(Box::new(std::iter::once(node))),
+                        )
+                    }
+                }
+            },
+            TypedExprKind::Identifier(_) | TypedExprKind::Number(_) | TypedExprKind::Bool(_) => {
+                Box::new(std::iter::empty())
+            }
+            TypedExprKind::Negate(e) => e.errors(roots_only),
+            TypedExprKind::Op(a, _, b) => {
+                Box::new(a.errors(roots_only).chain(b.errors(roots_only)))
+            }
+            TypedExprKind::If(c, t, f) => Box::new(
+                c.errors(roots_only)
+                    .chain(t.errors(roots_only))
+                    .chain(f.errors(roots_only)),
+            ),
+            TypedExprKind::Let(_, _, e) => match e {
+                None => Box::new(std::iter::empty()),
+                Some(e) => e.errors(roots_only),
+            },
+            TypedExprKind::Block(v) => v
+                .iter()
+                .map(|expr| expr.errors(roots_only))
+                .fold(Box::new(std::iter::empty()), |i, b| Box::new(i.chain(b))),
+        }
     }
 }
 
@@ -301,13 +370,7 @@ pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
         Ok(expr) => {
             if errors.is_empty() {
                 // do type checking if there are no parse errors
-                match expr.into_typed() {
-                    Ok(exp) => Ok(exp),
-                    Err(err) => {
-                        errors.push(err);
-                        Err(errors)
-                    }
-                }
+                Ok(expr.into_typed())
             } else {
                 Err(errors)
             }
@@ -372,7 +435,12 @@ mod tests {
     macro_rules! parse_ok {
         ($s:literal) => {
             let result = parse($s);
-            assert!(result.is_ok(), "error: {:?}", result)
+            assert!(result.is_ok(), "error: {:?}", result);
+            assert!(
+                parse($s).unwrap().errors(true).next().is_none(),
+                "error expected but parse succeeded: {:?}",
+                $s
+            );
         };
     }
 
@@ -382,10 +450,20 @@ mod tests {
         };
     }
 
+    macro_rules! ast_error {
+        ($s:literal) => {
+            assert!(
+                !parse($s).unwrap().errors(true).next().is_none(),
+                "no errors in AST for expression: {:?}",
+                $s
+            )
+        };
+    }
+
     macro_rules! parses {
         ($($lhs:expr => $rhs:expr)+) => {{
              $(
-                assert_eq!($rhs.into_typed().unwrap().kind, parse($lhs).map(|b| b.item.kind).unwrap());
+                assert_eq!($rhs.into_typed().kind, parse($lhs).map(|b| b.item.kind).unwrap());
              )+
         }};
     }
@@ -441,24 +519,25 @@ mod tests {
             )
         };
 
+        parse_ok!("if true {false} else {true}");
         // braces required
         parse_fails!("if true 1 else 0");
-        // empty braces not allowed
-        parse_fails!("if true {} else {0}");
-
-        parse_ok!("if true {false} else {true}");
+        // empty braces are legal and return Type::Void.
+        parse_ok!("if true {} else {}");
+        // Syntax OK but type checking fails.
+        ast_error!("if true {} else {0}");
     }
 
     #[test]
     fn immediate_type_errors() {
         // `if` arms must match
-        parse_fails!("if true {false} else {0}");
-        parse_fails!("if true {1} else {true}");
+        ast_error!("if true {false} else {0}");
+        ast_error!("if true {1} else {true}");
 
         // math operators only accept numbers
-        parse_fails!("true + 1");
-        parse_fails!("1 + true");
-        parse_fails!("true + true");
+        ast_error!("true + 1");
+        ast_error!("1 + true");
+        ast_error!("true + true");
     }
 
     #[test]

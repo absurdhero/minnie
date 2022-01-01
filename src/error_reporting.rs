@@ -2,20 +2,21 @@ use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 
-use crate::CompilerError;
+use crate::{CompilerError, ErrorType};
 
 ///! Configures and wraps the codespan_reporting library.
 
 /// Convenience function for printing errors in a single source file in one step.
-///
-/// We don't care about re-initializing everything each time we print because it happens so rarely.
 pub fn print_error(
     source_name: &str,
     source: &str,
     errors: &[CompilerError],
 ) -> Result<(), anyhow::Error> {
     let reporter = ErrorReporting::new();
-    reporter.print(source_name, source, errors)
+    for error in errors {
+        reporter.print(source_name, source, error)?;
+    }
+    Ok(())
 }
 
 pub struct ErrorReporting {
@@ -35,28 +36,30 @@ impl ErrorReporting {
         &self,
         source_name: &str,
         source: &str,
-        errors: &[CompilerError],
+        error: &CompilerError,
     ) -> Result<(), anyhow::Error> {
         let mut labels = vec![];
-        let mut first = true;
-        for error in errors {
-            if let Some(ref s) = error.span {
-                labels.push(if first {
-                    first = false;
-                    Label::primary((), s.clone()).with_message(error.to_string())
-                } else {
-                    Label::secondary((), s.clone()).with_message(error.to_string())
-                })
+        if let Some(ref s) = error.span {
+            match &error.error {
+                ErrorType::ParseError(_) => {
+                    labels.push(Label::primary((), s.clone()).with_message(error.to_string()));
+                }
+                ErrorType::ErrNode(primary, remaining) => {
+                    labels.push(Label::primary((), s.clone()).with_message(primary.to_string()));
+                    for secondary in remaining {
+                        labels.push(
+                            Label::secondary((), s.clone()).with_message(secondary.to_string()),
+                        )
+                    }
+                }
             }
         }
 
         let mut diagnostic = Diagnostic::error();
         diagnostic = diagnostic.with_labels(labels);
 
-        for error in errors {
-            if error.span.is_none() {
-                diagnostic = diagnostic.with_message(error.to_string());
-            }
+        if error.span.is_none() {
+            diagnostic = diagnostic.with_message(error.to_string());
         }
 
         // we only support one source file right now.

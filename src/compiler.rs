@@ -4,7 +4,7 @@ use std::ops::Range;
 use thiserror::Error;
 
 use crate::ast;
-use crate::ast::{AstError, Expr, ExprKind, Opcode, Type};
+use crate::ast::{ErrorNode, ErrorNodeKind, Expr, ExprKind, Opcode, Type, TypedSpExpr};
 use crate::span::Span;
 
 ///! The compiler module ties together the lexing, parsing, ast transformation, and codegen
@@ -14,7 +14,10 @@ use crate::span::Span;
 #[derive(Error, Debug)]
 pub enum ErrorType {
     #[error("parse error: {0}")]
-    ParseError(AstError),
+    ParseError(ast::AstError),
+    // stores primary and secondary errors
+    #[error("parse error: {0}")]
+    ErrNode(ErrorNodeKind, Vec<Span<ErrorNodeKind>>),
 }
 
 #[derive(Error, Debug)]
@@ -39,6 +42,7 @@ impl Type {
             Type::Int64 => "i64",
             Type::Bool => "i32",
             Type::Void => "",
+            Type::Unknown => unreachable!(),
         }
     }
 }
@@ -57,6 +61,38 @@ impl<'a> Compiler {
     /// * `program` - A string slice of the program source text
     pub fn compile(&self, program: &'a str) -> Result<ThunkSource, Vec<CompilerError>> {
         let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
+        let ast_errors: Vec<CompilerError> = expr
+            .errors(true)
+            .into_iter()
+            .map(|n| match n {
+                ErrorNode::<TypedSpExpr> {
+                    kind: top_err,
+                    expr: Some(top_expr),
+                } => {
+                    let child_errors = top_expr
+                        .errors(false)
+                        .map(|err_node| match &err_node.expr {
+                            None => (expr.start..expr.end, err_node.kind.clone()).into(),
+                            Some(e) => (Range::<usize>::from(e), err_node.kind.clone()).into(),
+                        })
+                        .collect();
+                    CompilerError {
+                        error: ErrorType::ErrNode(top_err.clone(), child_errors),
+                        span: n.expr.as_ref().map(|n| n.into()),
+                    }
+                }
+                ErrorNode {
+                    kind: top_err,
+                    expr: None,
+                } => CompilerError {
+                    error: ErrorType::ErrNode(top_err.clone(), vec![]),
+                    span: n.expr.as_ref().map(|n| n.into()),
+                },
+            })
+            .collect();
+        if !ast_errors.is_empty() {
+            return Err(ast_errors);
+        }
 
         let mut instructions: Vec<String> = vec![];
         self.codegen(&*expr, &mut instructions);
@@ -97,7 +133,9 @@ impl<'a> Compiler {
         }
 
         match &expr.kind {
-            ExprKind::Error(_) => panic!("encountered an ExprKind::Error in codegen"),
+            ExprKind::Error(ErrorNode { kind: _, expr: _ }) => {
+                panic!("encountered an ErrorNode in codegen")
+            }
             ExprKind::Number(n) => push!("i64.const {}", n),
             ExprKind::Identifier(_id) => {
                 todo!()
@@ -153,7 +191,7 @@ impl<'a> Compiler {
 
     /// Map from Span<AstError> into a CompilerError
     /// with context from the original source file.
-    fn map_parse_error(&self, parse_errors: Vec<Span<AstError>>) -> Vec<CompilerError> {
+    fn map_parse_error(&self, parse_errors: Vec<Span<ast::AstError>>) -> Vec<CompilerError> {
         parse_errors
             .into_iter()
             .map(|parse_error| {

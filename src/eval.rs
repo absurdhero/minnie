@@ -101,6 +101,7 @@ impl Eval {
                         }
                     }
                     Type::Void => unreachable!(),
+                    Type::Unknown => unreachable!(),
                 }
             }
             Err(trap) => Err(EvalError::from(trap)),
