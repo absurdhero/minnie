@@ -3,7 +3,7 @@ use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use std::ops::Range;
 
-use crate::{CompilerError, ErrorType};
+use crate::compiler::{CompilerError, ErrorType};
 
 ///! Configures and wraps the codespan_reporting library.
 

@@ -116,16 +116,16 @@ impl<'a> Compiler {
 
         let header = format!(
             r#"
-            (module
-              (func (export "top_level") (result {})
-          "#,
+(module
+  (func (export "top_level") (result {})
+"#,
             expr.ty.wasm_type()
         );
 
         let footer = r#"
-              )
-            )
-        "#;
+  )
+)
+"#;
 
         let output = format!("{}\n{}\n{}", header, instructions.join("\n"), footer);
         Ok(ThunkSource {
@@ -184,7 +184,7 @@ impl<'a> Compiler {
                 // execute and throw out the result of every expr but the last
                 for e in &v[0..(v.len() - 1)] {
                     self.codegen(e, instructions);
-                    if e.kind.is_expression() {
+                    if e.kind.is_expression() && e.ty != Type::Void {
                         push!("drop")
                     }
                 }

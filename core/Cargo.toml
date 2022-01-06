@@ -1,0 +1,19 @@
+[package]
+name = "minnie"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+lalrpop = "0.19.6"
+
+[dependencies]
+log = "0.4"
+logos = "0.12"
+codespan-reporting = "0.11"
+lalrpop-util = "0.19.6"
+anyhow = "1.0"
+gumdrop = "0.8"
+pretty_env_logger = "0.4"
+thiserror = "1.0"
+wasmtime = "0.32"
+rustyline = "9.1"

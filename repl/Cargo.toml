@@ -1,0 +1,19 @@
+[package]
+name = "minnie-repl"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "minrepl"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+minnie = { path = "../core" }
+log = "0.4"
+anyhow = "1.0"
+gumdrop = "0.8"
+pretty_env_logger = "0.4"
+thiserror = "1.0"
+rustyline = "9.1"
+wasmtime = "0.32"
