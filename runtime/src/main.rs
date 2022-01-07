@@ -10,7 +10,6 @@ use minnie::ast::Type;
 
 use minnie::compiler::{Compiler, ModuleSource};
 use minnie::error_reporting;
-use minnie::runtime;
 
 #[derive(Debug, Options)]
 struct CliOptions {
@@ -21,7 +20,7 @@ struct CliOptions {
     help: bool,
 }
 
-/// Parses arguments and either executes a file or presents an interactive prompt
+/// Runs a program from bytecode or by first compiling it from source
 fn main() -> Result<()> {
     let opts = CliOptions::parse_args_default_or_exit();
 
@@ -57,12 +56,5 @@ fn main() -> Result<()> {
         }
     };
 
-    let mut eval = runtime::Runtime::new()?;
-    match eval.add_module(bytecode) {
-        Ok(_) => match eval.eval("top_level") {
-            Ok(_) => Ok(()),
-            Err(err) => Err(anyhow::Error::new(err)),
-        },
-        Err(err) => Err(anyhow::Error::new(err)),
-    }
+    minnie::execute(vec![bytecode])
 }

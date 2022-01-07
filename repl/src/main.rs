@@ -45,23 +45,13 @@ fn main() -> Result<()> {
 
     for file in &files {
         // Compile from our source language to the wasm text format (wat)
-        let compiler = Compiler::new();
-        let source = fs::read_to_string(file)?;
-        let file_path = Path::new(&file);
-        let file_name = file_path
-            .file_name()
-            .expect("file path has no base name")
-            .to_str()
-            .unwrap();
-
-        match compiler.compile(file_name, &source) {
+        match minnie::compile_file(file) {
             Ok(bytecode) => {
                 // if it compiled, evaluate it and exit if evaluation fails.
                 eval.eval(&bytecode)?;
             }
-            Err(errors) => {
+            Err(_) => {
                 failed = true;
-                error_reporting::print_error(file, &source, &errors)?;
             }
         }
     }

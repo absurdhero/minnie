@@ -17,10 +17,11 @@ pub enum ErrorType {
     #[error("parse error: {0}")]
     ParseError(ast::AstError),
     // stores primary and secondary errors
-    #[error("parse error: {0}")]
+    #[error("error: {0}")]
     ErrNode(ErrorNodeKind, Vec<Span<ErrorNodeKind>>),
 }
 
+/// Errors caused by a fault in the program being compiled
 #[derive(Error, Debug)]
 #[error("{error}")]
 pub struct CompilerError {
