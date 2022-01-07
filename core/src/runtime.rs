@@ -4,23 +4,24 @@ use std::fmt::{Display, Formatter};
 use crate::ast::Type;
 use thiserror::Error;
 use wasmtime::*;
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
-use crate::compiler::ThunkSource;
+use crate::compiler::ModuleSource;
 
-///! The WebAssembly runtime. This module executes wasm programs.
+///! The WebAssembly runtime. This module executes compiled programs.
 
-pub struct Eval {
+pub struct Runtime {
     // An engine stores and configures global compilation settings like
     // optimization level, enabled wasm features, etc.
     engine: Engine,
 
     // A `Store` is what owns instances, functions, globals, etc. All wasm
     // items are stored within a `Store`, and it's what we'll always be using to
-    // interact with the wasm world. Custom data can be stored in stores but for
-    // now we just use `()`.
-    // The store is persisted between evaluation calls so that repl sessions can
-    // access state across multiple lines.
-    store: Store<()>,
+    // interact with the wasm world. Custom data can be stored in stores and
+    // this store stores WASI context used to communicate with the WASI host API.
+    store: Store<WasiCtx>,
+
+    modules: Vec<(Module, ModuleSource)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,7 +42,7 @@ impl Display for ReturnValue {
 }
 
 #[derive(Error, Debug)]
-pub enum EvalError {
+pub enum RuntimeError {
     #[error(transparent)]
     Trap(#[from] Trap),
 
@@ -50,32 +51,58 @@ pub enum EvalError {
     Any(#[from] anyhow::Error),
 }
 
-impl Eval {
-    pub fn new() -> Eval {
+impl Runtime {
+    pub fn new() -> Result<Runtime, anyhow::Error> {
         let engine = Engine::default();
-        let store = Store::new(&engine, ());
-        Eval { engine, store }
+
+        // configure WASI and add it to the store
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdio()
+            .inherit_args()?
+            .build();
+        let store = Store::new(&engine, wasi);
+
+        Ok(Runtime {
+            engine,
+            store,
+            modules: vec![],
+        })
+    }
+    /// Compiles a module for later use during execution.
+    /// The order that add_module is called determines the order of linking.
+    /// The last module added must contain the function to be called by eval(function_name).
+    pub fn add_module(&mut self, source: ModuleSource) -> Result<(), RuntimeError> {
+        self.modules
+            .push((Module::new(&self.engine, &source.wasm_text)?, source));
+        Ok(())
     }
 
-    pub fn eval(&mut self, thunk_source: &ThunkSource) -> Result<ReturnValue, EvalError> {
-        // Create a `Module` which represents a compiled form of our
-        // input. In this case it will be JIT-compiled after
-        // we parse the text returned by the compiler.
-        let module = Module::new(&self.engine, &thunk_source.wasm_text)?;
+    pub fn eval(&mut self, function_name: &str) -> Result<ReturnValue, RuntimeError> {
+        let mut linker = Linker::new(&self.engine);
 
-        // With a compiled `Module` we can then instantiate it, creating
-        // an `Instance` which represents a real running machine we can interact with.
-        let instance = Instance::new(&mut self.store, &module, &[])?;
+        // add WASI module to the linker
+        wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
+
+        // link in our remaining modules in registration order
+        for (module, source) in &self.modules {
+            linker.module(&mut self.store, &source.name, module)?;
+        }
+
+        // an `Instance` represents a real running machine we can interact with.
+        let last_module = &self.modules[self.modules.len() - 1];
+        let last_source = &last_module.1;
+        let instance = linker.instantiate(&mut self.store, &last_module.0)?;
+        //let instance = Instance::new(&mut self.store, module, &[])?;
 
         let top_level = instance
-            .get_func(&mut self.store, "top_level")
-            .expect("`top_level` was not an exported function");
+            .get_func(&mut self.store, function_name)
+            .unwrap_or_else(|| panic!("`{}` is not an exported function", function_name));
 
-        if let Type::Void = thunk_source.return_type {
+        if let Type::Void = last_source.return_type {
             let result = top_level.call(&mut self.store, &[], &mut []);
             return match result {
                 Ok(_) => Ok(ReturnValue::Void),
-                Err(trap) => Err(EvalError::from(trap)),
+                Err(trap) => Err(RuntimeError::from(trap)),
             };
         }
 
@@ -85,26 +112,26 @@ impl Eval {
         match result {
             Ok(_) => {
                 let returned = &returns[0];
-                match thunk_source.return_type {
+                match last_source.return_type {
                     Type::Int64 => {
                         if let Val::I64(i) = returned {
                             Ok(ReturnValue::Integer(*i))
                         } else {
-                            Err(EvalError::Any(anyhow::Error::msg("type mismatch")))
+                            Err(RuntimeError::Any(anyhow::Error::msg("type mismatch")))
                         }
                     }
                     Type::Bool => {
                         if let Val::I32(b) = returned {
                             Ok(ReturnValue::Bool(*b != 0))
                         } else {
-                            Err(EvalError::Any(anyhow::Error::msg("type mismatch")))
+                            Err(RuntimeError::Any(anyhow::Error::msg("type mismatch")))
                         }
                     }
                     Type::Void => unreachable!(),
                     Type::Unknown => unreachable!(),
                 }
             }
-            Err(trap) => Err(EvalError::from(trap)),
+            Err(trap) => Err(RuntimeError::from(trap)),
         }
     }
 }
@@ -114,13 +141,13 @@ mod tests {
     use thiserror::Error;
 
     use crate::compiler::Compiler;
-    use crate::eval;
-    use crate::eval::{EvalError, ReturnValue};
+    use crate::runtime;
+    use crate::runtime::{ReturnValue, RuntimeError};
 
     #[derive(Error, Debug)]
     pub enum TestError {
         #[error(transparent)]
-        EvalError(#[from] EvalError),
+        Runtime(#[from] RuntimeError),
         #[error(transparent)]
         Any(#[from] anyhow::Error),
         #[error("{msgs:?}")]
@@ -130,13 +157,16 @@ mod tests {
     /// takes a string of source code and executes it.
     /// Simplified error handling for tests.
     fn run(expr: &str) -> Result<ReturnValue, TestError> {
-        let mut eval = eval::Eval::new();
+        let mut eval = runtime::Runtime::new()?;
 
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
-        let result = compiler.compile(expr);
+        let result = compiler.compile("test", expr);
         match result {
-            Ok(thunk_source) => Ok(eval.eval(&thunk_source)?),
+            Ok(source) => {
+                eval.add_module(source)?;
+                Ok(eval.eval("top_level")?)
+            }
             Err(errors) => Err(TestError::Other {
                 msgs: errors.into_iter().map(|e| e.to_string()).collect(),
             }),

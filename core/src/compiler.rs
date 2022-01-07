@@ -29,7 +29,9 @@ pub struct CompilerError {
 }
 
 /// An executable unit of code
-pub struct ThunkSource {
+pub struct ModuleSource {
+    /// name of the module. Usually derived from the file name.
+    pub name: String,
     /// wasm source code in the "wat" text format
     pub wasm_text: String,
     /// The type of the return value that results from running this code
@@ -59,8 +61,13 @@ impl<'a> Compiler {
     ///
     /// # Arguments
     ///
+    /// * `file_name` - The base name of the file (without extension)
     /// * `program` - A string slice of the program source text
-    pub fn compile(&self, program: &'a str) -> Result<ThunkSource, Vec<CompilerError>> {
+    pub fn compile(
+        &self,
+        file_name: &str,
+        program: &'a str,
+    ) -> Result<ModuleSource, Vec<CompilerError>> {
         let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
         let ast_errors: Vec<CompilerError> = expr
             .errors(true)
@@ -128,7 +135,8 @@ impl<'a> Compiler {
 "#;
 
         let output = format!("{}\n{}\n{}", header, instructions.join("\n"), footer);
-        Ok(ThunkSource {
+        Ok(ModuleSource {
+            name: file_name.to_string(),
             wasm_text: output,
             return_type: expr.ty,
         })

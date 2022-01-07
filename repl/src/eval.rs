@@ -5,9 +5,9 @@ use minnie::ast::Type;
 use thiserror::Error;
 use wasmtime::*;
 
-use minnie::compiler::ThunkSource;
+use minnie::compiler::ModuleSource;
 
-///! The WebAssembly runtime. This module executes wasm programs.
+///! This module executes expressions for the REPL.
 
 pub struct Eval {
     // An engine stores and configures global compilation settings like
@@ -57,7 +57,7 @@ impl Eval {
         Eval { engine, store }
     }
 
-    pub fn eval(&mut self, thunk_source: &ThunkSource) -> Result<ReturnValue, EvalError> {
+    pub fn eval(&mut self, thunk_source: &ModuleSource) -> Result<ReturnValue, EvalError> {
         // Create a `Module` which represents a compiled form of our
         // input. In this case it will be JIT-compiled after
         // we parse the text returned by the compiler.

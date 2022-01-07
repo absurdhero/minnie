@@ -28,6 +28,11 @@ fn main() -> Result<()> {
 
     let file: String = opts.file;
     let file_path = Path::new(&file);
+    let file_name = file_path
+        .file_name()
+        .expect("file path has no base name")
+        .to_str()
+        .unwrap();
 
     // Compile from our source language to the wasm text format (wat)
     let compiler = Compiler::new();
@@ -37,7 +42,7 @@ fn main() -> Result<()> {
         .map(|s| PathBuf::from(s))
         .unwrap_or(file_path.with_extension("minw"));
 
-    match compiler.compile(&source) {
+    match compiler.compile(&file_name, &source) {
         Ok(bytecode) => {
             // if it compiled, write it to disk.
             match fs::write(output, bytecode.wasm_text) {

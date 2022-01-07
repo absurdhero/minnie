@@ -3,6 +3,7 @@ extern crate pretty_env_logger;
 mod eval;
 
 use std::fs;
+use std::path::Path;
 
 use anyhow::Result;
 use gumdrop::Options;
@@ -46,8 +47,14 @@ fn main() -> Result<()> {
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
         let source = fs::read_to_string(file)?;
+        let file_path = Path::new(&file);
+        let file_name = file_path
+            .file_name()
+            .expect("file path has no base name")
+            .to_str()
+            .unwrap();
 
-        match compiler.compile(&source) {
+        match compiler.compile(file_name, &source) {
             Ok(bytecode) => {
                 // if it compiled, evaluate it and exit if evaluation fails.
                 eval.eval(&bytecode)?;
@@ -95,7 +102,7 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
         let fake_path = format!("REPL#{}", expression_counter);
         expression_counter += 1;
 
-        let result = compiler.compile(&input);
+        let result = compiler.compile("repl", &input);
 
         match result {
             Ok(wat) => {

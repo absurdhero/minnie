@@ -8,9 +8,9 @@ use anyhow::Result;
 use gumdrop::Options;
 use minnie::ast::Type;
 
-use minnie::compiler::{Compiler, ThunkSource};
+use minnie::compiler::{Compiler, ModuleSource};
 use minnie::error_reporting;
-use minnie::eval;
+use minnie::runtime;
 
 #[derive(Debug, Options)]
 struct CliOptions {
@@ -29,13 +29,18 @@ fn main() -> Result<()> {
 
     let file: String = opts.file;
     let file_path = Path::new(&file);
+    let file_name = file_path
+        .file_name()
+        .expect("file path has no base name")
+        .to_str()
+        .unwrap();
 
     let source = fs::read_to_string(&file)?;
 
     // if the file is a source file, compile it first.
     let bytecode = if file_path.extension() == Some(OsStr::new("mi")) {
         let compiler = Compiler::new();
-        match compiler.compile(&source) {
+        match compiler.compile(file_name, &source) {
             Ok(bytecode) => bytecode,
             Err(errors) => {
                 error_reporting::print_error(&file, &source, &errors)?;
@@ -45,15 +50,19 @@ fn main() -> Result<()> {
     } else {
         // Support bytecode files containing a single wasm function with no return value.
         // This is sufficient until top-level functions are implemented.
-        ThunkSource {
+        ModuleSource {
+            name: file_name.to_string(),
             wasm_text: source,
             return_type: Type::Void,
         }
     };
 
-    let mut eval = eval::Eval::new();
-    match eval.eval(&bytecode) {
-        Ok(_) => Ok(()),
+    let mut eval = runtime::Runtime::new()?;
+    match eval.add_module(bytecode) {
+        Ok(_) => match eval.eval("top_level") {
+            Ok(_) => Ok(()),
+            Err(err) => Err(anyhow::Error::new(err)),
+        },
         Err(err) => Err(anyhow::Error::new(err)),
     }
 }
