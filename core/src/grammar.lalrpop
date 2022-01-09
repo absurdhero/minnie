@@ -62,12 +62,9 @@ MaybeStatements: Vec<UntypedSpExpr> = {
   () => vec![],
 };
 
+#[inline]
 Statements: Vec<UntypedSpExpr> = {
-    <mut v:Statements> <e:Sp<Statement>> => {
-        v.push(e);
-        v
-    },
-    Sp<Statement> => vec![<>],
+    Sequence1<Statement>
 };
 
 Statement: UntypedExprKind = {
@@ -106,8 +103,8 @@ Block: UntypedExprKind = {
 };
 
 CallExpression: UntypedExprKind = {
-    // TODO: Add new AST type
-    <func:ExpressionWithoutBlock> "(" ( Expression  ("," Expression )*)? ")" => func
+    <func:Sp<ExpressionWithoutBlock>> "(" <params:CommaNoTrail<Expression>> ")" =>
+       UntypedExprKind::Call(func, params)
 }
 
 // Type grammar
@@ -173,3 +170,40 @@ Term: UntypedExprKind = {
 IfExpr: UntypedExprKind = {
     "if" <c:Sp<ExpressionWithoutBlock>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
 }
+
+
+// Macros for delimited lists
+
+#[inline]
+Comma1NoTrail<E>: Vec<UntypedSpExpr> = {
+    Delimited1<E, ",">
+};
+
+#[inline]
+CommaNoTrail<E>: Vec<UntypedSpExpr> = {
+    Delimited<E, ",">
+};
+
+
+#[inline]
+Delimited<E, D>: Vec<UntypedSpExpr> = {
+    Delimited1<E, D>,
+    () => vec![],
+};
+
+
+Delimited1<E, D>: Vec<UntypedSpExpr> = {
+    <mut v:Delimited1<E, D>> D <e:Sp<E>> => {
+        v.push(e);
+        v
+    },
+    Sp<E> => vec![<>],
+};
+
+Sequence1<E>: Vec<UntypedSpExpr> = {
+    <mut v:Sequence1<E>> <e:Sp<E>> => {
+        v.push(e);
+        v
+    },
+    Sp<E> => vec![<>],
+};

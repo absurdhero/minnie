@@ -787,7 +787,9 @@ mod tests {
     fn call() {
         parses! {
             "foo()" => ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("foo".to_string()))), vec![])
-            "foo()();" => ExprKind::Call(expr!(ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("foo".to_string()))))), vec![])
+            "foo()();" => ExprKind::Call(expr!(
+                ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("foo".to_string()))), vec![])),
+                vec![])
         };
     }
 }
