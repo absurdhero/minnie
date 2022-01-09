@@ -179,6 +179,9 @@ impl<'a> Compiler {
                     push!("i64.mul");
                 }
             },
+            ExprKind::Call(_op, _params) => {
+                unimplemented!()
+            }
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);

@@ -17,6 +17,7 @@ extern {
         "/" => Token::Divide,
         "=" => Token::Eq,
         ";" => Token::Semi,
+        "," => Token::Comma,
         "{" => Token::CurlyStart,
         "}" => Token::CurlyEnd,
         "(" => Token::ParenStart,
@@ -53,10 +54,11 @@ pub Sequence: UntypedExprKind = {
 
 // Statement grammar
 
+// statements optionally followed by one expression
 MaybeStatements: Vec<UntypedSpExpr> = {
   Statements,
-  <mut v:Statements> <e:Sp<Expr>> => {v.push(e); v},
-  Sp<Expr> => vec![<>],
+  <mut v:Statements> <e:Sp<ExpressionWithoutBlock>> => {v.push(e); v},
+  Sp<ExpressionWithoutBlock> => vec![<>],
   () => vec![],
 };
 
@@ -69,18 +71,44 @@ Statements: Vec<UntypedSpExpr> = {
 };
 
 Statement: UntypedExprKind = {
-  Let,
-  ExprStmtLike,
-  Block,
+  LetStatement,
+  ExpressionStatement,
+  //";" => None, // shift-reduce conflict
 };
 
-Let: UntypedExprKind = {
+Expression: UntypedExprKind = {
+        ExpressionWithBlock,
+        ExpressionWithoutBlock,
+}
+// expressions that act as individual statements with their own delimiters (e.g. curly braces)
+ExpressionWithBlock: UntypedExprKind = {
+Block,
+IfExpr,
+}
+
+ExpressionWithoutBlock: UntypedExprKind = {
+CallExpression,
+ArithmeticOrLogicalExpression,
+}
+
+#[inline]
+ExpressionStatement: UntypedExprKind = {
+    <ExpressionWithoutBlock> ";",
+    <ExpressionWithBlock> ";"?,
+}
+
+LetStatement: UntypedExprKind = {
     "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
 };
 
 Block: UntypedExprKind = {
   "{" <MaybeStatements> "}" => UntypedExprKind::Block(<>),
 };
+
+CallExpression: UntypedExprKind = {
+    // TODO: Add new AST type
+    <func:ExpressionWithoutBlock> "(" ( Expression  ("," Expression )*)? ")" => func
+}
 
 // Type grammar
 
@@ -89,9 +117,7 @@ MaybeTyAscription: Option<Type> = {
 };
 
 MaybeInitExpr: Option<UntypedSpExpr> = {
-    ("=" <Sp<Expr>>)?,
-    ("=" <Sp<IfExpr>>) => Some(<>),
-    ("=" <Sp<Block>>) => Some(<>),
+    ("=" <Sp<Expression>>)?,
 };
 
 TySum: Type = {
@@ -109,15 +135,9 @@ TyPrim: Type = {
 
 // Expression grammar
 
-// expressions that act as individual statements with their own delimiters (e.g. curly braces)
-ExprStmtLike: UntypedExprKind = {
-    IfExpr,
-    <Expr> ";",
-}
-
-/// A single expression yields a value and may recurse
-Expr: UntypedExprKind = {
-    Sp<Expr> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
+/// A single operator expression yields a value and may recurse
+ArithmeticOrLogicalExpression : UntypedExprKind = {
+    Sp<ExpressionWithoutBlock> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
     Factor,
 };
 
@@ -147,9 +167,9 @@ Term: UntypedExprKind = {
     ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
-    "(" <Expr> ")",
+    "(" <Expression> ")",
 };
 
 IfExpr: UntypedExprKind = {
-    "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
+    "if" <c:Sp<ExpressionWithoutBlock>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
 }

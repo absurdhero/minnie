@@ -2,9 +2,6 @@ extern crate pretty_env_logger;
 
 mod eval;
 
-use std::fs;
-use std::path::Path;
-
 use anyhow::Result;
 use gumdrop::Options;
 use rustyline::error::ReadlineError;

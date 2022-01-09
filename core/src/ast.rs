@@ -59,6 +59,7 @@ pub enum ExprKind<T> {
     Bool(bool),
     Negate(T),
     Op(T, Opcode, T),
+    Call(T, Vec<T>),
     Block(Vec<T>),
     // condition, then-arm, else-arm
     If(T, T, T),
@@ -224,6 +225,9 @@ impl UntypedSpExpr {
                     e2 = type_error_correction(expected, e2);
                 }
                 Expr::new(ExprKind::Op(e1, op, e2), expected)
+            }
+            ExprKind::Call(_op, _params) => {
+                todo!("type checking for function calls not implemented")
             }
             ExprKind::If(c, t, f) => {
                 let mut c = c.into_typed(lexical_env);
@@ -399,6 +403,14 @@ impl TypedSpExpr {
             TypedExprKind::Op(l, _, r) => {
                 Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
             }
+            TypedExprKind::Call(op, params) => Box::new(op.errors(roots_only).chain(
+                params.iter().map(|expr| expr.errors(roots_only)).fold(
+                    Box::new(std::iter::empty())
+                        as Box<dyn Iterator<Item = &'a TypedErrorNode> + 'a>,
+                    |i, b| Box::new(i.chain(b)),
+                ),
+            )),
+
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
                     .chain(t.errors(roots_only))
@@ -613,6 +625,14 @@ mod tests {
         };
     }
 
+    macro_rules! block {
+        [$e:expr $(, $rest:expr)*] => {
+            expr!(ExprKind::Block(vec![
+                $e $(, $rest)*
+            ]))
+        };
+    }
+
     macro_rules! parse_ok {
         ($s:literal) => {
             let result = parse($s);
@@ -688,19 +708,21 @@ mod tests {
 
     #[test]
     fn conditionals() {
+        let one = || expr!(ExprKind::Number("1".to_string()));
+        let two = || expr!(ExprKind::Number("2".to_string()));
+
         parses! {
             "true" => ExprKind::Bool(true)
             "false" => ExprKind::Bool(false)
             "if true { 1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
+                block![one()],
+                block![two()],
             )
             "if true { true;1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Bool(true)),
-                                              expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
+                block![expr!(ExprKind::Bool(true)), one()],
+                block![two()],
             )
         };
 
@@ -736,6 +758,14 @@ mod tests {
         ast_error!("{ if foo { 1 } else { 2 } }");
         ast_error!("{ if true { let foo = 1; foo } else { foo } }");
         ast_error!("{{ let foo = 1;} { foo } }");
+
+        // cases where a block must not be treated as a sub-expression
+        // and should be treated as an element in a sequence of expressions instead.
+        let one = || expr!(ExprKind::Number("1".to_string()));
+        parses! {
+            "{1}-1" => block![block![one()], expr!(ExprKind::Negate(one()))]
+            "{1}(1)" => block![block![one()], one()]
+        };
     }
 
     #[test]
@@ -751,5 +781,13 @@ mod tests {
 
         parse_ok!("let foo:int = 1; foo");
         ast_error!("let foo:bool = 1; foo");
+    }
+
+    #[test]
+    fn call() {
+        parses! {
+            "foo()" => ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("foo".to_string()))), vec![])
+            "foo()();" => ExprKind::Call(expr!(ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("foo".to_string()))))), vec![])
+        };
     }
 }

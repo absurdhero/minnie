@@ -34,6 +34,8 @@ pub enum Token<'input> {
     Else,
     #[regex("[a-z][a-zA-Z0-9_]*", |lex| lex.slice())]
     ID(&'input str),
+    #[token(",")]
+    Comma,
     #[token("{")]
     CurlyStart,
     #[token("}")]
@@ -80,6 +82,7 @@ impl<'i> Display for Token<'i> {
             Token::If => "if",
             Token::Else => "else",
             Token::ID(s) => s,
+            Token::Comma => ",",
             Token::CurlyStart => "{",
             Token::CurlyEnd => "}",
             Token::ParenStart => "(",
