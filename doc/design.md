@@ -2,9 +2,9 @@
 
 ## Motivation
 
-All languages have a style of programming in mind. A philosophy of
+All languages have a style of programming in mind -- a philosophy of
 programming happiness. This language is no different in that it attempts to
-take the best ideas of our time and carefully tie them together into a whole
+take the best ideas of its time and carefully tie them together into a whole
 that delights its users.
 
 Programmers make conscious decisions about language choice based on a number of
@@ -20,7 +20,7 @@ commercially include:
     Readability
   - semantic complexity
   - brevity vs verbosity
-- Easy of learning the language
+- Ease of learning the language
   - familiarity (compared to past experiences)
   - documentation
   - language complexity (primarily governed by type system and syntax)
