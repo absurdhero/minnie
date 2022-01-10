@@ -101,11 +101,19 @@ pub enum Opcode {
 }
 
 /// Types supported by the language
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
+    // Primitive Types
     Int64,
     Bool,
     Void,
+
+    // Compound Types
+    Function{
+        params: Vec<Type>,
+        returns: Box<Type>,
+    },
+
     // can only exist in an AST that contains type errors
     Unknown,
 }
@@ -191,19 +199,18 @@ impl UntypedSpExpr {
                 kind: err,
                 expr: node,
             }) => {
+                let err_type = match err {
+                    // if the parser returns a TypeMismatch with an expected type,
+                    // the type checker can use that to recover.
+                    ErrorNodeKind::TypeMismatch { ref expected, found: _ } => expected.clone(),
+                    // Otherwise, set the expression's type to Unknown.
+                    _ => Type::Unknown,
+                };
                 let typed_err_node = ErrorNode {
                     kind: err,
                     expr: node.map(|n| n.into_typed(lexical_env)),
                 };
-                match typed_err_node.kind {
-                    // if the parser returns a TypeMismatch with an expected type,
-                    // the type checker can use that to recover.
-                    ErrorNodeKind::TypeMismatch { expected, found: _ } => {
-                        Expr::new(TypedExprKind::Error(typed_err_node), expected)
-                    }
-                    // Otherwise, set the expression's type to Unknown.
-                    _ => Expr::new(TypedExprKind::Error(typed_err_node), Type::Unknown),
-                }
+                Expr::new(TypedExprKind::Error(typed_err_node), err_type)
             }
             ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
             ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
@@ -217,34 +224,62 @@ impl UntypedSpExpr {
             ExprKind::Op(e1, op, e2) => {
                 let mut e1 = e1.into_typed(lexical_env);
                 let mut e2 = e2.into_typed(lexical_env);
-                let expected = Type::Int64;
                 if e1.ty != Type::Int64 {
-                    e1 = type_error_correction(expected, e1);
+                    e1 = type_error_correction(Type::Int64, e1);
                 }
                 if e2.ty != Type::Int64 {
-                    e2 = type_error_correction(expected, e2);
+                    e2 = type_error_correction(Type::Int64, e2);
                 }
-                Expr::new(ExprKind::Op(e1, op, e2), expected)
+                Expr::new(ExprKind::Op(e1, op, e2), Type::Int64)
             }
-            ExprKind::Call(_op, _params) => {
-                todo!("type checking for function calls not implemented")
+            ExprKind::Call(op, params) => {
+                let typed_op = op.into_typed(lexical_env);
+                let func_type = typed_op.ty.clone();
+                let typed_actuals: Vec<TypedSpExpr> = params
+                    .into_iter()
+                    .map(|e| e.into_typed(lexical_env))
+                    .collect();
+                let actual_types: Vec<Type> = typed_actuals.iter().map(|p| p.ty.clone()).collect();
+
+                // verify that func_type is a Function and that the arguments
+                // match the formal parameters.
+                match func_type {
+                    Type::Function { params: formal_params, returns } => {
+
+                        // TODO: compare length and then zip so multiple errors can be omitted for mismatched params.
+                        if actual_types == formal_params {
+                            // The type of this expression is the return type of
+                            // the function after evaluation.
+                            Expr::new(ExprKind::Call(typed_op, typed_actuals), returns.as_ref().clone())
+                        } else {
+                            // broken
+                            let typed_op = type_error_correction(Type::Unknown, typed_op);
+                            Expr::new(ExprKind::Call(typed_op, typed_actuals), returns.as_ref().clone())
+                        }
+                    }
+                    _ => {
+                         // if it isn't a function, return a corrected return type
+                        let typed_op = type_error_correction(Type::Unknown, typed_op);
+                        Expr::new(ExprKind::Call(typed_op, typed_actuals), Type::Unknown)
+                    }
+                }
             }
             ExprKind::If(c, t, f) => {
                 let mut c = c.into_typed(lexical_env);
                 let t = t.into_typed(lexical_env);
                 let mut f = f.into_typed(lexical_env);
-                let return_ty = t.ty;
+                let return_ty = t.ty.clone();
                 if c.ty != Type::Bool {
                     c = type_error_correction(Type::Bool, c)
                 }
                 if f.ty != return_ty {
-                    f = type_error_correction(return_ty, f);
+                    f = type_error_correction(return_ty.clone(), f);
                     return type_error_annotation(
                         TypedSpExpr::new(start, end, ExprKind::If(c, t, f), return_ty),
                         "the branches of this `if` condition have mismatched return types",
                     );
                 }
-                Expr::new(ExprKind::If(c, t, f), return_ty)
+                Expr::new(ExprKind::If(c, t, f), return_ty.clone())
             }
             ExprKind::Block(exprs) => {
                 let mut block_env = LexicalEnv::new(lexical_env);
@@ -255,7 +290,7 @@ impl UntypedSpExpr {
                 let ty = if typed_exprs.is_empty() {
                     Type::Void
                 } else {
-                    typed_exprs[typed_exprs.len() - 1].ty
+                    typed_exprs[typed_exprs.len() - 1].ty.clone()
                 };
                 Expr::new(ExprKind::Block(typed_exprs), ty)
             }
@@ -282,19 +317,19 @@ impl UntypedSpExpr {
                 let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
-                    let uid = lexical_env.add(id.name(), ty);
+                    let uid = lexical_env.add(id.name(), ty.clone());
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
-                            bind_expr = type_error_correction(ty, bind_expr)
+                            bind_expr = type_error_correction(ty.clone(), bind_expr)
                         }
                         Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), Type::Void)
                     } else {
                         Expr::new(ExprKind::Let(uid, Some(ty), binding), Type::Void)
                     }
                 } else if let Some(expr) = binding {
-                    let ty = expr.ty;
-                    let uid = lexical_env.add(id.name(), ty);
-                    Expr::new(ExprKind::Let(uid, Some(ty), Some(expr)), Type::Void)
+                    let ty = &expr.ty;
+                    let uid = lexical_env.add(id.name(), ty.clone());
+                    Expr::new(ExprKind::Let(uid, Some(ty.clone()), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
                         TypedSpExpr::new(
@@ -338,8 +373,8 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
     type_error(
         ErrorNode {
             kind: ErrorNodeKind::TypeMismatch {
-                expected,
-                found: found.ty,
+                expected: expected.clone(),
+                found: found.ty.clone(),
             },
             expr: Some(found),
         },
@@ -349,7 +384,7 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
 }
 
 fn type_error_annotation(expr: TypedSpExpr, msg: &'static str) -> TypedSpExpr {
-    let ty = expr.ty;
+    let ty = expr.ty.clone();
     let range = expr.range();
     type_error(
         ErrorNode {
@@ -429,14 +464,14 @@ impl TypedSpExpr {
 
     /// Find locally bound identifiers and place their Type in a vector indexed by their ID number
     pub fn local_identifiers(&self, local: &mut Vec<Type>) {
-        let ty = self.ty;
+        let ty = &self.ty;
         match &self.kind {
             TypedExprKind::Identifier(id) => match id {
                 ID::Id(id) => {
                     if local.len() <= *id {
                         local.resize(id + 1, Type::Unknown);
                     }
-                    local[*id] = ty;
+                    local[*id] = ty.clone();
                 }
                 ID::Name(_) => {
                     panic!("local_identifiers called on an untransformed tree")
@@ -466,7 +501,7 @@ impl TypedSpExpr {
                             if local.len() <= *id {
                                 local.resize(id + 1, Type::Unknown);
                             }
-                            local[*id] = e.ty;
+                            local[*id] = e.ty.clone();
                         }
                         ID::Name(_) => {
                             panic!("local_identifiers called on an untransformed tree")

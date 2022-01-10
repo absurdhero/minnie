@@ -129,6 +129,7 @@ impl Runtime {
                     }
                     Type::Void => unreachable!(),
                     Type::Unknown => unreachable!(),
+                    Type::Function { .. } => todo!(),
                 }
             }
             Err(trap) => Err(RuntimeError::from(trap)),

@@ -102,6 +102,7 @@ impl Eval {
                     }
                     Type::Void => unreachable!(),
                     Type::Unknown => unreachable!(),
+                    Type::Function { .. } => todo!(),
                 }
             }
             Err(trap) => Err(EvalError::from(trap)),

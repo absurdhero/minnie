@@ -47,6 +47,7 @@ impl Type {
             Type::Bool => "i32",
             Type::Void => "",
             Type::Unknown => unreachable!(),
+            Type::Function { .. } => { todo!() }
         }
     }
 }
@@ -139,7 +140,7 @@ impl<'a> Compiler {
         Ok(ModuleSource {
             name: file_name.to_string(),
             wasm_text: output,
-            return_type: expr.ty,
+            return_type: expr.ty.clone(),
         })
     }
 
