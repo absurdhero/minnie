@@ -5,8 +5,10 @@ use log::Level;
 use thiserror::Error;
 
 use crate::ast;
-use crate::ast::{ErrorNode, ErrorNodeKind, Expr, ExprKind, Opcode, Type, TypedSpExpr};
+use crate::ast::ExprKind::Identifier;
+use crate::ast::{ErrorNode, ErrorNodeKind, Expr, ExprKind, Opcode, ParseResult, TypedSpExpr};
 use crate::span::Span;
+use crate::types::{Type, ID};
 
 ///! The compiler module ties together the lexing, parsing, ast transformation, and codegen
 ///! into a single abstraction. Give it source code and it gives back bytecode.
@@ -30,6 +32,7 @@ pub struct CompilerError {
 }
 
 /// An executable unit of code
+#[derive(Debug)]
 pub struct ModuleSource {
     /// name of the module. Usually derived from the file name.
     pub name: String,
@@ -41,13 +44,24 @@ pub struct ModuleSource {
 
 impl Type {
     /// map data types into their wasm format
-    pub fn wasm_type(&self) -> &'static str {
+    pub fn wasm_type(&self) -> String {
         match self {
-            Type::Int64 => "i64",
-            Type::Bool => "i32",
-            Type::Void => "",
+            Type::Int64 => "i64".to_string(),
+            Type::Bool => "i32".to_string(),
+            Type::Void => "".to_string(),
+            Type::Function { params, returns } => {
+                // This does not do the right thing if a type parameter is itself a function.
+                // But we don't support first class functions yet anyway.
+                let mut out = String::new();
+                for param in params {
+                    out.push_str(format!(" (param {})", param.wasm_type()).as_str());
+                }
+                if returns.as_ref() != &Type::Void {
+                    out.push_str(format!(" (result {})", returns.wasm_type()).as_str());
+                }
+                out
+            }
             Type::Unknown => unreachable!(),
-            Type::Function { .. } => { todo!() }
         }
     }
 }
@@ -55,6 +69,7 @@ impl Type {
 pub struct Compiler {}
 
 impl<'a> Compiler {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Compiler {
         Compiler {}
     }
@@ -70,7 +85,10 @@ impl<'a> Compiler {
         file_name: &str,
         program: &'a str,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
-        let expr = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
+        let ParseResult {
+            ast: expr,
+            module_env,
+        } = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
         let ast_errors: Vec<CompilerError> = expr
             .errors(true)
             .into_iter()
@@ -109,34 +127,66 @@ impl<'a> Compiler {
         }
 
         let mut identifiers = vec![];
+        let mut import_decls: Vec<String> = vec![];
         let mut instructions: Vec<String> = vec![];
+
+        // declare imports
+        for (index, (name, ty)) in module_env.imports.iter().enumerate() {
+            let namespace = "base";
+            import_decls.push(format!(
+                "(import \"{}\" \"{}\" (func ${} {}))",
+                namespace,
+                name,
+                index,
+                ty.wasm_type()
+            ))
+        }
 
         // declare locals
         expr.local_identifiers(&mut identifiers);
         for (id, ty) in identifiers.iter().enumerate() {
-            instructions.push(format!("(local ${} {})", id, ty.wasm_type()))
+            let type_descriptor = match ty {
+                // the funcref type is i32. Maybe we need Type::FuncRef?
+                Type::Function { .. } => "i32".to_string(),
+                _ => ty.wasm_type(),
+            };
+            instructions.push(format!("(local ${} {})", id, type_descriptor))
         }
+
+        // generate table of function references for all imports and
+        // functions defined in this module.
+        let funcrefs = format!(
+            "(table {} funcref)\n  (elem (i32.const 0) {})",
+            import_decls.len(),
+            (0..(import_decls.len()))
+                .into_iter()
+                .map(|n| format!("${}", n.to_string()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
 
         self.codegen(&*expr, &mut instructions);
 
-        if log_enabled!(Level::Trace) {
-            trace!("instructions:\n{:?}", instructions);
-        }
+        trace!("instructions:\n{:?}", instructions);
 
-        let header = format!(
+        let output = format!(
             r#"
 (module
+  ;; imports
+  {}
+  ;; funcref table
+  {}
+  ;; function declarations
   (func (export "top_level") (result {})
-"#,
-            expr.ty.wasm_type()
-        );
-
-        let footer = r#"
+    {}
   )
 )
-"#;
-
-        let output = format!("{}\n{}\n{}", header, instructions.join("\n"), footer);
+"#,
+            import_decls.join("\n  "),
+            funcrefs,
+            expr.ty.wasm_type(),
+            instructions.join("\n    "),
+        );
         Ok(ModuleSource {
             name: file_name.to_string(),
             wasm_text: output,
@@ -166,9 +216,11 @@ impl<'a> Compiler {
                 panic!("encountered an ErrorNode in codegen")
             }
             ExprKind::Number(n) => push!("i64.const {}", n),
-            ExprKind::Identifier(id) => {
-                push!("local.get ${}", id.id())
-            }
+            ExprKind::Identifier(id) => match id {
+                ID::Name(_) => unreachable!(),
+                ID::VarId(_) => push!("local.get ${}", id.id()),
+                ID::FuncId(_) => push!("i32.const {}", id.id()),
+            },
             ExprKind::Negate(b) => match b.as_ref() {
                 Expr {
                     kind: ExprKind::Number(n),
@@ -180,8 +232,19 @@ impl<'a> Compiler {
                     push!("i64.mul");
                 }
             },
-            ExprKind::Call(_op, _params) => {
-                unimplemented!()
+            ExprKind::Call(op, params) => {
+                for param in params {
+                    self.codegen(param, instructions);
+                }
+                if let Identifier(ID::FuncId(id)) = op.kind {
+                    // direct call when the function ID is known at compile time
+                    push!("call ${}", id);
+                } else {
+                    // otherwise, evaluate the operator which will push a function reference
+                    // onto the stack where call_indirect will read it.
+                    self.codegen(op, instructions);
+                    push!("call_indirect {}", op.ty.wasm_type())
+                }
             }
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);

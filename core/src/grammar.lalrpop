@@ -1,6 +1,7 @@
-use crate::ast::{AstError, ID, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode, Type};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode};
 use crate::lexer::Token;
 use crate::span::Span;
+use crate::types::{ID, Type};
 
 grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<'input>>);
 

@@ -1,7 +1,8 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-use crate::ast::Type;
+use crate::module;
+use crate::types::Type;
 use thiserror::Error;
 use wasmtime::*;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
@@ -83,6 +84,8 @@ impl Runtime {
         // add WASI module to the linker
         wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
 
+        module::add_base_to_linker(&mut linker)?;
+
         // link in our remaining modules in registration order
         for (module, source) in &self.modules {
             linker.module(&mut self.store, &source.name, module)?;
@@ -129,7 +132,9 @@ impl Runtime {
                     }
                     Type::Void => unreachable!(),
                     Type::Unknown => unreachable!(),
-                    Type::Function { .. } => todo!(),
+                    Type::Function { .. } => Err(RuntimeError::Any(anyhow::anyhow!(
+                        "entry point cannot return a function"
+                    ))),
                 }
             }
             Err(trap) => Err(RuntimeError::from(trap)),
@@ -158,15 +163,15 @@ mod tests {
     /// takes a string of source code and executes it.
     /// Simplified error handling for tests.
     fn run(expr: &str) -> Result<ReturnValue, TestError> {
-        let mut eval = runtime::Runtime::new()?;
+        let mut runtime = runtime::Runtime::new()?;
 
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
         let result = compiler.compile("test", expr);
         match result {
             Ok(source) => {
-                eval.add_module(source)?;
-                Ok(eval.eval("top_level")?)
+                runtime.add_module(source)?;
+                Ok(runtime.eval("top_level")?)
             }
             Err(errors) => Err(TestError::Other {
                 msgs: errors.into_iter().map(|e| e.to_string()).collect(),
@@ -248,6 +253,23 @@ mod tests {
             // shadowing
             "let foo = 1; let bar = { let foo = 2; foo }; foo + bar " => ReturnValue::Integer(3)
             "let a = 1; let b = { let a = 2; {let b = 9;} a }; let c = { let d = 4; d }; a + b + c " => ReturnValue::Integer(7)
+        }
+    }
+
+    #[test]
+    fn direct_call() {
+        returns! {
+            "print_num(1)" => ReturnValue::Void
+            "itoa(0)" => ReturnValue::Integer('0' as i64)
+            "print_num(itoa(0))" => ReturnValue::Void
+        }
+    }
+
+    #[test]
+    fn indirect_call() {
+        returns! {
+            "let foo = itoa; foo(1)" => ReturnValue::Integer('1' as i64)
+            "let foo = itoa; foo(1)" => ReturnValue::Integer('1' as i64)
         }
     }
 }
