@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use gumdrop::Options;
-use minnie::ast::Type;
+use minnie::types::Type;
 
 use minnie::compiler::{Compiler, ModuleSource};
 use minnie::error_reporting;

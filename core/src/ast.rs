@@ -1,6 +1,8 @@
-use crate::grammar;
 use crate::lexer::{LexError, Lexer, Token};
+use crate::module::ModuleEnv;
 use crate::span::Span;
+use crate::types::{Type, ID};
+use crate::{grammar, module};
 use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
@@ -8,6 +10,8 @@ use thiserror::Error;
 ///! This module is responsible for parsing source code into a validated AST
 ///! for consumption by the compiler module.
 
+/// These Error types are only used by `grammar.lalrpop`.
+/// They are converted to our own error types for consumers of this module.
 pub type ParseError<'input> = lalrpop_util::ParseError<usize, Token<'input>, Span<AstError>>;
 pub type ErrorRecovery<'input> = lalrpop_util::ErrorRecovery<usize, Token<'input>, Span<AstError>>;
 
@@ -59,6 +63,7 @@ pub enum ExprKind<T> {
     Bool(bool),
     Negate(T),
     Op(T, Opcode, T),
+    Call(T, Vec<T>),
     Block(Vec<T>),
     // condition, then-arm, else-arm
     If(T, T, T),
@@ -68,26 +73,9 @@ pub enum ExprKind<T> {
     Error(ErrorNode<T>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ID {
-    Name(String),
-    Id(usize),
-}
-impl ID {
-    // unsafe accessors used in distinct AST phases.
-    pub fn name(&self) -> &String {
-        if let ID::Name(name) = self {
-            name
-        } else {
-            panic!("accessed textual ID on resolved numeric ID");
-        }
-    }
-    pub fn id(&self) -> usize {
-        if let ID::Id(id) = self {
-            *id
-        } else {
-            panic!("accessed numeric ID on unresolved textual ID");
-        }
+impl<T> ExprKind<T> {
+    pub fn is_expression(&self) -> bool {
+        !matches!(self, ExprKind::Let(_, _, _) | ExprKind::Error(_))
     }
 }
 
@@ -97,16 +85,6 @@ pub enum Opcode {
     Div,
     Add,
     Sub,
-}
-
-/// Types supported by the language
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type {
-    Int64,
-    Bool,
-    Void,
-    // can only exist in an AST that contains type errors
-    Unknown,
 }
 
 /// Typed Expression
@@ -178,7 +156,13 @@ impl From<Span<AstError>> for AstError {
 }
 
 impl UntypedSpExpr {
-    /// Converts an untyped tree into a typed one, catching type errors in the process.
+    /// Converts an untyped tree into a typed one.
+    ///
+    /// # Work Performed During This Phase
+    ///
+    /// * tracking the declaration of variables and functions
+    /// * converting identifiers into unique ID numbers
+    /// * annotating the AST with type errors
     pub fn into_typed(self, lexical_env: &mut LexicalEnv) -> TypedSpExpr {
         let Span {
             start,
@@ -190,19 +174,21 @@ impl UntypedSpExpr {
                 kind: err,
                 expr: node,
             }) => {
+                let err_type = match err {
+                    // if the parser returns a TypeMismatch with an expected type,
+                    // the type checker can use that to recover.
+                    ErrorNodeKind::TypeMismatch {
+                        ref expected,
+                        found: _,
+                    } => expected.clone(),
+                    // Otherwise, set the expression's type to Unknown.
+                    _ => Type::Unknown,
+                };
                 let typed_err_node = ErrorNode {
                     kind: err,
                     expr: node.map(|n| n.into_typed(lexical_env)),
                 };
-                match typed_err_node.kind {
-                    // if the parser returns a TypeMismatch with an expected type,
-                    // the type checker can use that to recover.
-                    ErrorNodeKind::TypeMismatch { expected, found: _ } => {
-                        Expr::new(TypedExprKind::Error(typed_err_node), expected)
-                    }
-                    // Otherwise, set the expression's type to Unknown.
-                    _ => Expr::new(TypedExprKind::Error(typed_err_node), Type::Unknown),
-                }
+                Expr::new(TypedExprKind::Error(typed_err_node), err_type)
             }
             ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
             ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
@@ -216,25 +202,62 @@ impl UntypedSpExpr {
             ExprKind::Op(e1, op, e2) => {
                 let mut e1 = e1.into_typed(lexical_env);
                 let mut e2 = e2.into_typed(lexical_env);
-                let expected = Type::Int64;
                 if e1.ty != Type::Int64 {
-                    e1 = type_error_correction(expected, e1);
+                    e1 = type_error_correction(Type::Int64, e1);
                 }
                 if e2.ty != Type::Int64 {
-                    e2 = type_error_correction(expected, e2);
+                    e2 = type_error_correction(Type::Int64, e2);
                 }
-                Expr::new(ExprKind::Op(e1, op, e2), expected)
+                Expr::new(ExprKind::Op(e1, op, e2), Type::Int64)
+            }
+            ExprKind::Call(op, params) => {
+                let typed_op = op.into_typed(lexical_env);
+                let oper_type = typed_op.ty.clone();
+                let typed_actuals: Vec<TypedSpExpr> = params
+                    .into_iter()
+                    .map(|e| e.into_typed(lexical_env))
+                    .collect();
+                let actual_types: Vec<Type> = typed_actuals.iter().map(|p| p.ty.clone()).collect();
+
+                // verify that func_type is a Function and that the arguments
+                // match the formal parameters.
+                match oper_type {
+                    Type::Function {
+                        params: formal_params,
+                        returns,
+                    } => {
+                        // TODO: compare length and then zip so multiple errors can be omitted for mismatched params.
+                        if actual_types == formal_params {
+                            Expr::new(
+                                ExprKind::Call(typed_op, typed_actuals),
+                                returns.as_ref().clone(),
+                            )
+                        } else {
+                            // broken, see to-do above
+                            let typed_op = type_error_correction(Type::Unknown, typed_op);
+                            Expr::new(
+                                ExprKind::Call(typed_op, typed_actuals),
+                                returns.as_ref().clone(),
+                            )
+                        }
+                    }
+                    _ => {
+                        // if it isn't a function, return a corrected return type
+                        let typed_op = type_error_correction(Type::Unknown, typed_op);
+                        Expr::new(ExprKind::Call(typed_op, typed_actuals), Type::Unknown)
+                    }
+                }
             }
             ExprKind::If(c, t, f) => {
                 let mut c = c.into_typed(lexical_env);
                 let t = t.into_typed(lexical_env);
                 let mut f = f.into_typed(lexical_env);
-                let return_ty = t.ty;
+                let return_ty = t.ty.clone();
                 if c.ty != Type::Bool {
                     c = type_error_correction(Type::Bool, c)
                 }
                 if f.ty != return_ty {
-                    f = type_error_correction(return_ty, f);
+                    f = type_error_correction(return_ty.clone(), f);
                     return type_error_annotation(
                         TypedSpExpr::new(start, end, ExprKind::If(c, t, f), return_ty),
                         "the branches of this `if` condition have mismatched return types",
@@ -251,7 +274,7 @@ impl UntypedSpExpr {
                 let ty = if typed_exprs.is_empty() {
                     Type::Void
                 } else {
-                    typed_exprs[typed_exprs.len() - 1].ty
+                    typed_exprs[typed_exprs.len() - 1].ty.clone()
                 };
                 Expr::new(ExprKind::Block(typed_exprs), ty)
             }
@@ -278,19 +301,19 @@ impl UntypedSpExpr {
                 let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
-                    let uid = lexical_env.add(id.name(), ty);
+                    let uid = lexical_env.add_var(id.name(), ty.clone());
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
-                            bind_expr = type_error_correction(ty, bind_expr)
+                            bind_expr = type_error_correction(ty.clone(), bind_expr)
                         }
                         Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), Type::Void)
                     } else {
                         Expr::new(ExprKind::Let(uid, Some(ty), binding), Type::Void)
                     }
                 } else if let Some(expr) = binding {
-                    let ty = expr.ty;
-                    let uid = lexical_env.add(id.name(), ty);
-                    Expr::new(ExprKind::Let(uid, Some(ty), Some(expr)), Type::Void)
+                    let ty = &expr.ty;
+                    let uid = lexical_env.add_var(id.name(), ty.clone());
+                    Expr::new(ExprKind::Let(uid, Some(ty.clone()), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
                         TypedSpExpr::new(
@@ -334,8 +357,8 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
     type_error(
         ErrorNode {
             kind: ErrorNodeKind::TypeMismatch {
-                expected,
-                found: found.ty,
+                expected: expected.clone(),
+                found: found.ty.clone(),
             },
             expr: Some(found),
         },
@@ -345,7 +368,7 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
 }
 
 fn type_error_annotation(expr: TypedSpExpr, msg: &'static str) -> TypedSpExpr {
-    let ty = expr.ty;
+    let ty = expr.ty.clone();
     let range = expr.range();
     type_error(
         ErrorNode {
@@ -399,6 +422,14 @@ impl TypedSpExpr {
             TypedExprKind::Op(l, _, r) => {
                 Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
             }
+            TypedExprKind::Call(op, params) => Box::new(op.errors(roots_only).chain(
+                params.iter().map(|expr| expr.errors(roots_only)).fold(
+                    Box::new(std::iter::empty())
+                        as Box<dyn Iterator<Item = &'a TypedErrorNode> + 'a>,
+                    |i, b| Box::new(i.chain(b)),
+                ),
+            )),
+
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
                     .chain(t.errors(roots_only))
@@ -417,15 +448,16 @@ impl TypedSpExpr {
 
     /// Find locally bound identifiers and place their Type in a vector indexed by their ID number
     pub fn local_identifiers(&self, local: &mut Vec<Type>) {
-        let ty = self.ty;
+        let ty = &self.ty;
         match &self.kind {
             TypedExprKind::Identifier(id) => match id {
-                ID::Id(id) => {
+                ID::VarId(id) => {
                     if local.len() <= *id {
                         local.resize(id + 1, Type::Unknown);
                     }
-                    local[*id] = ty;
+                    local[*id] = ty.clone();
                 }
+                ID::FuncId(_) => {}
                 ID::Name(_) => {
                     panic!("local_identifiers called on an untransformed tree")
                 }
@@ -445,36 +477,39 @@ impl TypedSpExpr {
                 t.local_identifiers(local);
                 f.local_identifiers(local)
             }
-            TypedExprKind::Let(id, _, e) => {
-                if let Some(e) = e {
-                    // for `let id = expr`, the id is accessed while binding.
-                    // Dead store elimination would obviate this need.
-                    match id {
-                        ID::Id(id) => {
-                            if local.len() <= *id {
-                                local.resize(id + 1, Type::Unknown);
-                            }
-                            local[*id] = e.ty;
+            TypedExprKind::Let(id, _, Some(e)) => {
+                // for `let id = expr`, the id is accessed while binding.
+                // Dead store elimination would obviate this need.
+                match id {
+                    ID::VarId(id) | ID::FuncId(id) => {
+                        if local.len() <= *id {
+                            local.resize(id + 1, Type::Unknown);
                         }
-                        ID::Name(_) => {
-                            panic!("local_identifiers called on an untransformed tree")
-                        }
+                        local[*id] = e.ty.clone();
                     }
-                    e.local_identifiers(local);
+                    ID::Name(_) => {
+                        panic!("local_identifiers called on an untransformed tree")
+                    }
                 }
+                e.local_identifiers(local);
             }
             _ => {}
         }
     }
 }
 
-impl<T> ExprKind<T> {
-    pub fn is_expression(&self) -> bool {
-        !matches!(self, ExprKind::Let(_, _, _) | ExprKind::Error(_))
-    }
+#[derive(Debug)]
+pub struct ParseResult {
+    pub ast: TypedSpExpr,
+    pub module_env: ModuleEnv,
 }
 
-pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
+/// Parse program text and return its type-checked AST
+///
+/// # arguments
+///
+/// * `program` - The program text for a single module
+pub fn parse(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
 
@@ -503,10 +538,15 @@ pub fn parse(program: &str) -> Result<TypedSpExpr, Vec<Span<AstError>>> {
 
     match result {
         Ok(expr) => {
+            // do type checking only if there are no parse errors
             if errors.is_empty() {
-                // do type checking if there are no parse errors
-                let mut env = LexicalEnv::new_root();
-                Ok(expr.into_typed(&mut env))
+                let module_env = module::basis_imports();
+                let mut env = LexicalEnv::new_root(&module_env);
+                let typed_tree = expr.into_typed(&mut env);
+                Ok(ParseResult {
+                    ast: typed_tree,
+                    module_env,
+                })
             } else {
                 Err(errors)
             }
@@ -545,50 +585,87 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
     .into()
 }
 
+#[derive(Debug)]
 pub struct LexicalEnv<'a> {
     // association of symbol to its unique ID and type
     bindings: HashMap<String, (ID, Type)>,
     parent: Option<&'a LexicalEnv<'a>>,
+    func_count: usize,
+    var_count: usize,
+    imports: &'a ModuleEnv,
 }
 
 impl<'a> LexicalEnv<'a> {
+    /// Create a new lexical scope inside of another one
     fn new(parent: &'a LexicalEnv) -> LexicalEnv<'a> {
         LexicalEnv {
             bindings: HashMap::new(),
             parent: Some(parent),
+            var_count: parent.var_count,
+            func_count: parent.func_count,
+            imports: parent.imports,
         }
     }
 
-    fn new_root() -> LexicalEnv<'a> {
+    /// Create an empty top-level lexical environment
+    ///
+    /// # arguments
+    ///
+    /// * `module_env` - The imported symbols. This is only being passed into a new lexical env instead
+    ///  of being mutated by the env during type checking because the `use` statement does not exist yet.
+    ///  Until then, imports are controlled by the runtime a priori and imports are immutable.
+    fn new_root(module_env: &'a ModuleEnv) -> LexicalEnv<'a> {
         LexicalEnv {
             bindings: HashMap::new(),
             parent: None,
+            var_count: 0,
+            func_count: 0,
+            imports: module_env,
         }
     }
 
-    fn add(&mut self, name: &str, ty: Type) -> ID {
-        let new_id = ID::Id(self.next_id());
+    /// Add an identifier for a variable to the environment
+    ///
+    /// This function also increments a counter used to uniquely identical lexical variables.
+    /// WebAssembly tracks `locals` by unique incrementing number so this stage of compilation
+    /// assigns numbers to each unique variable.
+    ///
+    /// We are effectively performing "alpha-reduction", where a variable that shadows another
+    /// gets its own ID distinct from the ID of variables by the same name in outer scopes.
+    fn add_var(&mut self, name: &str, ty: Type) -> ID {
+        let new_id = ID::VarId(self.var_count);
+        self.var_count += 1;
         self.bindings.insert(name.to_string(), (new_id.clone(), ty));
         new_id
     }
 
-    fn next_id(&self) -> usize {
-        self.bindings.len() + self.parent.map_or(0, |p| p.next_id())
+    /// Add a new function to the environment
+    ///
+    /// Functions have their own numeric indexes separate from variables
+    /// because webassembly trackes them in their own index space.
+    fn add_func(&mut self, name: &str, ty: Type) -> ID {
+        let new_id = ID::FuncId(self.func_count);
+        self.func_count += 1;
+        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+        new_id
     }
 
+    /// Return the unique ID and Type of a variable name in this lexical scope or an outer
+    /// scope, ascending upwards through the lexical environment up to the module scope.
     fn id_type(&self, name: &str) -> Option<(ID, Type)> {
         self.bindings
             .get(name)
             .cloned()
             .or_else(|| self.parent.and_then(|p| p.id_type(name)))
+            .or_else(|| self.imports.id_type(name))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{parse, UntypedExprKind, UntypedSpExpr};
-    use crate::ast::{AstError, ExprKind, LexicalEnv, UntypedExpr, ID};
+    use crate::ast::*;
     use crate::span::Span;
+    use crate::types::*;
 
     impl PartialEq for Span<AstError> {
         fn eq(&self, other: &Self) -> bool {
@@ -613,12 +690,20 @@ mod tests {
         };
     }
 
+    macro_rules! block {
+        [$e:expr $(, $rest:expr)*] => {
+            expr!(ExprKind::Block(vec![
+                $e $(, $rest)*
+            ]))
+        };
+    }
+
     macro_rules! parse_ok {
         ($s:literal) => {
             let result = parse($s);
             assert!(result.is_ok(), "error: {:?}", result);
             let parse_result = parse($s).unwrap();
-            let error = parse_result.errors(true).next();
+            let error = parse_result.ast.errors(true).next();
             assert!(
                 error.is_none(),
                 "parse error in: {:?}: {:#?}",
@@ -637,7 +722,7 @@ mod tests {
     macro_rules! ast_error {
         ($s:literal) => {
             assert!(
-                !parse($s).unwrap().errors(true).next().is_none(),
+                !parse($s).unwrap().ast.errors(true).next().is_none(),
                 "no errors in AST for expression: {:?}",
                 $s
             )
@@ -646,9 +731,11 @@ mod tests {
 
     macro_rules! parses {
         ($($lhs:expr => $rhs:expr)+) => {{
-            let mut env = LexicalEnv::new_root();
+            let imports = module::basis_imports();
+            let mut env = LexicalEnv::new_root(&imports);
              $(
-                assert_eq!(UntypedSpExpr::from($rhs).into_typed(&mut env).kind, parse($lhs).map(|b| b.item.kind).unwrap());
+                assert_eq!(UntypedSpExpr::from($rhs).into_typed(&mut env).kind,
+                           parse($lhs).map(|b| b.ast.item.kind).unwrap());
              )+
         }};
     }
@@ -688,19 +775,21 @@ mod tests {
 
     #[test]
     fn conditionals() {
+        let one = || expr!(ExprKind::Number("1".to_string()));
+        let two = || expr!(ExprKind::Number("2".to_string()));
+
         parses! {
             "true" => ExprKind::Bool(true)
             "false" => ExprKind::Bool(false)
             "if true { 1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
+                block![one()],
+                block![two()],
             )
             "if true { true;1 } else { 2 }" => ExprKind::If(
                 expr!(ExprKind::Bool(true)),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Bool(true)),
-                                              expr!(ExprKind::Number("1".to_string()))])),
-                expr!(ExprKind::Block(vec![expr!(ExprKind::Number("2".to_string()))])),
+                block![expr!(ExprKind::Bool(true)), one()],
+                block![two()],
             )
         };
 
@@ -736,6 +825,14 @@ mod tests {
         ast_error!("{ if foo { 1 } else { 2 } }");
         ast_error!("{ if true { let foo = 1; foo } else { foo } }");
         ast_error!("{{ let foo = 1;} { foo } }");
+
+        // cases where a block must not be treated as a sub-expression
+        // and should be treated as an element in a sequence of expressions instead.
+        let one = || expr!(ExprKind::Number("1".to_string()));
+        parses! {
+            "{1}-1" => block![block![one()], expr!(ExprKind::Negate(one()))]
+            "{1}(1)" => block![block![one()], one()]
+        };
     }
 
     #[test]
@@ -751,5 +848,15 @@ mod tests {
 
         parse_ok!("let foo:int = 1; foo");
         ast_error!("let foo:bool = 1; foo");
+    }
+
+    #[test]
+    fn call() {
+        parses! {
+            "print_num(1)" => ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("print_num".to_string()))),
+                                             vec![expr!(ExprKind::Number("1".to_string()))])
+            "({print_num})(1);" => ExprKind::Call(block![expr!(ExprKind::Identifier(ID::Name("print_num".to_string())))],
+                                                vec![expr!(ExprKind::Number("1".to_string()))])
+        };
     }
 }

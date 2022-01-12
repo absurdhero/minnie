@@ -2,9 +2,6 @@ extern crate pretty_env_logger;
 
 mod eval;
 
-use std::fs;
-use std::path::Path;
-
 use anyhow::Result;
 use gumdrop::Options;
 use rustyline::error::ReadlineError;
@@ -40,7 +37,7 @@ fn main() -> Result<()> {
     }
 
     // keep the same environment state by using the same evaluator for files and the repl
-    let mut eval = eval::Eval::new();
+    let mut eval = eval::Eval::new()?;
     let mut failed = false;
 
     for file in &files {
@@ -48,7 +45,7 @@ fn main() -> Result<()> {
         match minnie::compile_file(file) {
             Ok(bytecode) => {
                 // if it compiled, evaluate it and exit if evaluation fails.
-                eval.eval(&bytecode)?;
+                eval.eval(bytecode)?;
             }
             Err(_) => {
                 failed = true;
@@ -97,7 +94,7 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
         match result {
             Ok(wat) => {
                 prompt_level = 1;
-                match eval.eval(&wat) {
+                match eval.eval(wat) {
                     Ok(r) => println!("{}", r),
                     Err(e) => println!("error: {}", e),
                 }

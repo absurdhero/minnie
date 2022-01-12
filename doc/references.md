@@ -5,9 +5,16 @@
 [Standard ML of New Jersey (CS-TR-329-91)](https://www.cs.princeton.edu/~appel/papers/smlnj.pdf) -
 A look inside a statically typed functional language implementation.
 
+[Runtime Tags Aren't Necessary](https://www.cs.princeton.edu/~appel/papers/142.pdf)
+
+[A Runtime System](https://www.cs.princeton.edu/techreports/1989/220.pdf)
+
+[Runtime Tags Aren't Necessary](https://www.cs.princeton.edu/~appel/papers/142.pdf)
+
+[A Critique of Standard ML](https://www.cs.princeton.edu/~appel/papers/critique.pdf)
+
 [A New Backend for Standard ML of New Jersey (Draft)](https://people.cs.uchicago.edu/~jhr/papers/2020/ifl-smlnj-llvm.pdf) -
 A recent report on SML/NJ moving its backend to LLVM.
-
 
 ## WebAssembly
 

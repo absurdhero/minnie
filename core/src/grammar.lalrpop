@@ -1,6 +1,7 @@
-use crate::ast::{AstError, ID, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode, Type};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode};
 use crate::lexer::Token;
 use crate::span::Span;
+use crate::types::{ID, Type};
 
 grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<'input>>);
 
@@ -17,6 +18,7 @@ extern {
         "/" => Token::Divide,
         "=" => Token::Eq,
         ";" => Token::Semi,
+        "," => Token::Comma,
         "{" => Token::CurlyStart,
         "}" => Token::CurlyEnd,
         "(" => Token::ParenStart,
@@ -53,34 +55,58 @@ pub Sequence: UntypedExprKind = {
 
 // Statement grammar
 
+// statements optionally followed by one expression
 MaybeStatements: Vec<UntypedSpExpr> = {
   Statements,
-  <mut v:Statements> <e:Sp<Expr>> => {v.push(e); v},
-  Sp<Expr> => vec![<>],
+  <mut v:Statements> <e:Sp<ExpressionWithoutBlock>> => {v.push(e); v},
+  Sp<ExpressionWithoutBlock> => vec![<>],
   () => vec![],
 };
 
+#[inline]
 Statements: Vec<UntypedSpExpr> = {
-    <mut v:Statements> <e:Sp<Statement>> => {
-        v.push(e);
-        v
-    },
-    Sp<Statement> => vec![<>],
+    Sequence1<Statement>
 };
 
 Statement: UntypedExprKind = {
-  Let,
-  ExprStmtLike,
-  Block,
+  LetStatement,
+  ExpressionStatement,
+  //";" => None, // shift-reduce conflict
 };
 
-Let: UntypedExprKind = {
+Expression: UntypedExprKind = {
+        ExpressionWithBlock,
+        ExpressionWithoutBlock,
+}
+// expressions that act as individual statements with their own delimiters (e.g. curly braces)
+ExpressionWithBlock: UntypedExprKind = {
+Block,
+IfExpr,
+}
+
+ExpressionWithoutBlock: UntypedExprKind = {
+CallExpression,
+ArithmeticOrLogicalExpression,
+}
+
+#[inline]
+ExpressionStatement: UntypedExprKind = {
+    <ExpressionWithoutBlock> ";",
+    <ExpressionWithBlock> ";"?,
+}
+
+LetStatement: UntypedExprKind = {
     "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
 };
 
 Block: UntypedExprKind = {
   "{" <MaybeStatements> "}" => UntypedExprKind::Block(<>),
 };
+
+CallExpression: UntypedExprKind = {
+    <func:Sp<ExpressionWithoutBlock>> "(" <params:CommaNoTrail<Expression>> ")" =>
+       UntypedExprKind::Call(func, params)
+}
 
 // Type grammar
 
@@ -89,9 +115,7 @@ MaybeTyAscription: Option<Type> = {
 };
 
 MaybeInitExpr: Option<UntypedSpExpr> = {
-    ("=" <Sp<Expr>>)?,
-    ("=" <Sp<IfExpr>>) => Some(<>),
-    ("=" <Sp<Block>>) => Some(<>),
+    ("=" <Sp<Expression>>)?,
 };
 
 TySum: Type = {
@@ -109,15 +133,9 @@ TyPrim: Type = {
 
 // Expression grammar
 
-// expressions that act as individual statements with their own delimiters (e.g. curly braces)
-ExprStmtLike: UntypedExprKind = {
-    IfExpr,
-    <Expr> ";",
-}
-
-/// A single expression yields a value and may recurse
-Expr: UntypedExprKind = {
-    Sp<Expr> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
+/// A single operator expression yields a value and may recurse
+ArithmeticOrLogicalExpression : UntypedExprKind = {
+    Sp<ExpressionWithoutBlock> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
     Factor,
 };
 
@@ -147,9 +165,46 @@ Term: UntypedExprKind = {
     ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
-    "(" <Expr> ")",
+    "(" <Expression> ")",
 };
 
 IfExpr: UntypedExprKind = {
-    "if" <c:Sp<Expr>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
+    "if" <c:Sp<ExpressionWithoutBlock>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
 }
+
+
+// Macros for delimited lists
+
+#[inline]
+Comma1NoTrail<E>: Vec<UntypedSpExpr> = {
+    Delimited1<E, ",">
+};
+
+#[inline]
+CommaNoTrail<E>: Vec<UntypedSpExpr> = {
+    Delimited<E, ",">
+};
+
+
+#[inline]
+Delimited<E, D>: Vec<UntypedSpExpr> = {
+    Delimited1<E, D>,
+    () => vec![],
+};
+
+
+Delimited1<E, D>: Vec<UntypedSpExpr> = {
+    <mut v:Delimited1<E, D>> D <e:Sp<E>> => {
+        v.push(e);
+        v
+    },
+    Sp<E> => vec![<>],
+};
+
+Sequence1<E>: Vec<UntypedSpExpr> = {
+    <mut v:Sequence1<E>> <e:Sp<E>> => {
+        v.push(e);
+        v
+    },
+    Sp<E> => vec![<>],
+};

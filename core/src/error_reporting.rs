@@ -26,6 +26,7 @@ pub struct ErrorReporting {
 }
 
 impl ErrorReporting {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> ErrorReporting {
         ErrorReporting {
             writer: StandardStream::stderr(ColorChoice::Always),

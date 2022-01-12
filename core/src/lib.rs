@@ -9,9 +9,12 @@ use std::path::Path;
 pub mod ast;
 pub mod compiler;
 pub mod error_reporting;
-pub mod lexer;
 pub mod runtime;
-pub mod span;
+pub mod types;
+
+mod lexer;
+mod module;
+mod span;
 
 lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
