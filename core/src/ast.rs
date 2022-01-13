@@ -3,6 +3,7 @@ use crate::module::ModuleEnv;
 use crate::span::Span;
 use crate::types::{Type, ID};
 use crate::{grammar, module};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
@@ -65,9 +66,11 @@ pub enum ExprKind<T> {
     Op(T, Opcode, T),
     Call(T, Vec<T>),
     Block(Vec<T>),
-    // condition, then-arm, else-arm
+    // fields: name, params, return type, body
+    Function(ID, Vec<FormalParam>, Type, T),
+    // fields: condition, then-arm, else-arm
     If(T, T, T),
-    // identifier, optional type, optional binding
+    // fields: identifier, optional type, optional binding
     Let(ID, Option<Type>, Option<T>),
     // The error and the original node (if present)
     Error(ErrorNode<T>),
@@ -85,6 +88,18 @@ pub enum Opcode {
     Div,
     Add,
     Sub,
+}
+
+/// A parameter declaration in a function signature.
+///
+/// The representation will need to change once pattern arguments are supported.
+/// The `name` field will be replaced by a pattern expression and a new AST
+/// transformation will replace the pattern with unnamed local variable ID and
+/// insert destructuring expressions into the AST at the beginning of the function's block.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FormalParam {
+    pub name: ID,
+    pub ty: Type,
 }
 
 /// Typed Expression
@@ -301,7 +316,7 @@ impl UntypedSpExpr {
                 let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
-                    let uid = lexical_env.add_var(id.name(), ty.clone());
+                    let uid = lexical_env.add_var(id.name(), &ty);
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
                             bind_expr = type_error_correction(ty.clone(), bind_expr)
@@ -312,7 +327,7 @@ impl UntypedSpExpr {
                     }
                 } else if let Some(expr) = binding {
                     let ty = &expr.ty;
-                    let uid = lexical_env.add_var(id.name(), ty.clone());
+                    let uid = lexical_env.add_var(id.name(), ty);
                     Expr::new(ExprKind::Let(uid, Some(ty.clone()), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
@@ -325,6 +340,42 @@ impl UntypedSpExpr {
                         "Not supported: untyped `let` with no binding.",
                     );
                 }
+            }
+            UntypedExprKind::Function(name, params, returns, body) => {
+                // extend the lexical environment with an incomplete entry for the function
+                let func_id = lexical_env.add_func(name.name(), Type::Unknown);
+
+                // create a new lexical environment for the function body
+                let mut func_env = LexicalEnv::new(lexical_env);
+
+                // register and track the IDs of each parameter
+                let typed_params: Vec<FormalParam> = params
+                    .into_iter()
+                    .map(|p| FormalParam {
+                        name: func_env.add_var(p.name.name(), &p.ty),
+                        ty: p.ty,
+                    })
+                    .collect();
+
+                // generate the type signature of this function
+                let func_ty = Type::Function {
+                    params: typed_params.iter().map(|p| p.ty.clone()).collect(),
+                    returns: Box::new(returns.clone()),
+                };
+
+                // fill in the outer environment with the function's fully resolved type
+                lexical_env.update_func(name.name(), func_ty.clone());
+
+                // return the typed function
+                Expr::new(
+                    ExprKind::Function(
+                        func_id,
+                        typed_params,
+                        returns,
+                        body.into_typed(&mut func_env),
+                    ),
+                    func_ty,
+                )
             }
         };
         (self.start, Box::new(typed_kind), self.end).into()
@@ -429,7 +480,7 @@ impl TypedSpExpr {
                     |i, b| Box::new(i.chain(b)),
                 ),
             )),
-
+            TypedExprKind::Function(_, _, _, block) => block.errors(roots_only),
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
                     .chain(t.errors(roots_only))
@@ -581,7 +632,7 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
 #[derive(Debug)]
 pub struct LexicalEnv<'a> {
     // association of symbol to its unique ID and type
-    bindings: HashMap<String, (ID, Type)>,
+    bindings: RefCell<HashMap<String, (ID, Type)>>,
     parent: Option<&'a LexicalEnv<'a>>,
     func_count: usize,
     var_count: usize,
@@ -592,7 +643,7 @@ impl<'a> LexicalEnv<'a> {
     /// Create a new lexical scope inside of another one
     fn new(parent: &'a LexicalEnv) -> LexicalEnv<'a> {
         LexicalEnv {
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             parent: Some(parent),
             var_count: parent.var_count,
             func_count: parent.func_count,
@@ -609,7 +660,7 @@ impl<'a> LexicalEnv<'a> {
     ///  Until then, imports are controlled by the runtime a priori and imports are immutable.
     fn new_root(module_env: &'a ModuleEnv) -> LexicalEnv<'a> {
         LexicalEnv {
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             parent: None,
             var_count: 0,
             func_count: 0,
@@ -625,28 +676,41 @@ impl<'a> LexicalEnv<'a> {
     ///
     /// We are effectively performing "alpha-reduction", where a variable that shadows another
     /// gets its own ID distinct from the ID of variables by the same name in outer scopes.
-    fn add_var(&mut self, name: &str, ty: Type) -> ID {
+    fn add_var(&mut self, name: &str, ty: &Type) -> ID {
         let new_id = ID::VarId(self.var_count);
         self.var_count += 1;
-        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+        self.bindings
+            .borrow_mut()
+            .insert(name.to_string(), (new_id.clone(), ty.clone()));
         new_id
     }
 
     /// Add a new function to the environment
     ///
     /// Functions have their own numeric indexes separate from variables
-    /// because webassembly trackes them in their own index space.
+    /// because webassembly tracks them in their own index space.
     fn add_func(&mut self, name: &str, ty: Type) -> ID {
         let new_id = ID::FuncId(self.func_count);
         self.func_count += 1;
-        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+        self.bindings
+            .borrow_mut()
+            .insert(name.to_string(), (new_id.clone(), ty));
         new_id
+    }
+
+    fn update_func(&self, name: &str, ty: Type) {
+        let mut bindings = self.bindings.borrow_mut();
+        let (id, _) = bindings
+            .remove(name)
+            .expect("could not update lexical mapping for non-existent function");
+        bindings.insert(name.to_string(), (id, ty));
     }
 
     /// Return the unique ID and Type of a variable name in this lexical scope or an outer
     /// scope, ascending upwards through the lexical environment up to the module scope.
     fn id_type(&self, name: &str) -> Option<(ID, Type)> {
         self.bindings
+            .borrow()
             .get(name)
             .cloned()
             .or_else(|| self.parent.and_then(|p| p.id_type(name)))

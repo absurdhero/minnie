@@ -246,6 +246,7 @@ impl<'a> Compiler {
                     push!("call_indirect {}", op.ty.wasm_type())
                 }
             }
+            ExprKind::Function(name, params, returns, block) => {}
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);

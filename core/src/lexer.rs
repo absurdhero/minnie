@@ -56,6 +56,12 @@ pub enum Token<'input> {
     #[token("bool")]
     Bool,
 
+    // functions
+    #[token("fn")]
+    Fn,
+    #[token("->")]
+    RArrow,
+
     // token that represents lex errors
     #[error]
     // skip whitespace
@@ -93,6 +99,9 @@ impl<'i> Display for Token<'i> {
             Token::Colon => ":",
             Token::Int => "int",
             Token::Bool => "bool",
+
+            Token::Fn => "fn",
+            Token::RArrow => "->",
 
             // this is an unsatisfying string representation
             Token::Error => "<unhandled>",
