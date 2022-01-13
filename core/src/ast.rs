@@ -762,8 +762,12 @@ mod tests {
             "abc" => ExprKind::Identifier(ID::Name("abc".to_string()))
             "a" => ExprKind::Identifier(ID::Name("a".to_string()))
             "a123" => ExprKind::Identifier(ID::Name("a123".to_string()))
+            "_" => ExprKind::Identifier(ID::Name("_".to_string()))
+            "_a" => ExprKind::Identifier(ID::Name("_a".to_string()))
+            "Caps" => ExprKind::Identifier(ID::Name("Caps".to_string()))
+            "CAPS" => ExprKind::Identifier(ID::Name("CAPS".to_string()))
+            "日本語" => ExprKind::Identifier(ID::Name("日本語".to_string()))
         };
-        parse_fails!("Caps");
     }
 
     #[test]

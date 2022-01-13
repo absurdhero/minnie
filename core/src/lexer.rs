@@ -33,7 +33,7 @@ pub enum Token<'input> {
     If,
     #[token("else")]
     Else,
-    #[regex("[a-z][a-zA-Z0-9_]*", |lex| lex.slice())]
+    #[regex("(\\p{XID_Start}|_)\\p{XID_Continue}*", |lex| lex.slice())]
     ID(&'input str),
     #[token(",")]
     Comma,
