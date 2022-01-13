@@ -1,3 +1,4 @@
+use crate::span::Span;
 use logos::Lexer as LogosLexer;
 use logos::Logos;
 use std::fmt::{Display, Formatter};
@@ -104,12 +105,12 @@ impl<'i> Display for Token<'i> {
 #[derive(Clone, Error, Debug, PartialEq, Eq)]
 pub enum LexError {
     #[error("invalid token")]
-    InvalidToken((usize, usize)),
+    InvalidToken,
 }
 
 pub struct Lexer<'i> {
     logos: LogosLexer<'i, Token<'i>>,
-    pub errors: Vec<LexError>,
+    pub errors: Vec<Span<LexError>>,
 }
 
 impl<'i> Iterator for Lexer<'i> {
@@ -135,10 +136,10 @@ impl<'i> Lexer<'i> {
         }
     }
     /// Convert error tokens to LexErrors
-    fn convert(&mut self, token: Token<'i>) -> Result<Token<'i>, LexError> {
+    fn convert(&mut self, token: Token<'i>) -> Result<Token<'i>, Span<LexError>> {
         let range = self.logos.span();
         match token {
-            Token::Error => Err(LexError::InvalidToken((range.start, range.end))),
+            Token::Error => Err((range.start, LexError::InvalidToken, range.end).into()),
             t => Ok(t),
         }
     }

@@ -520,21 +520,15 @@ pub fn parse(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
     let mut errors: Vec<Span<AstError>> = lexer
         .errors
         .into_iter()
-        .map(|e| match e {
-            LexError::InvalidToken((l, r)) => Span {
-                start: l,
-                end: r,
-                item: AstError::LexError(e),
-            },
-        })
+        // map lex errors into AstError
+        .map(|s| s.map(AstError::LexError))
+        // append any errors encountered during parsing
+        .chain(
+            recovered_errors
+                .into_iter()
+                .map(|r| map_lalrpop_error(&r.error)),
+        )
         .collect();
-
-    errors.append(
-        &mut recovered_errors
-            .into_iter()
-            .map(|r| map_lalrpop_error(&r.error))
-            .collect(),
-    );
 
     match result {
         Ok(expr) => {
@@ -567,7 +561,7 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
         }
         &ParseError::InvalidToken { location } => (
             location..location,
-            AstError::LexError(LexError::InvalidToken((location, location))),
+            AstError::LexError(LexError::InvalidToken),
         ),
         &ParseError::UnrecognizedToken {
             token,
@@ -576,10 +570,9 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
             token.0..token.2,
             AstError::UnexpectedToken(token.1.to_string(), expected.to_vec()),
         ),
-        &ParseError::ExtraToken { token } => (
-            token.0..token.2,
-            AstError::LexError(LexError::InvalidToken((token.0, token.2))),
-        ),
+        &ParseError::ExtraToken { token } => {
+            (token.0..token.2, AstError::LexError(LexError::InvalidToken))
+        }
         ParseError::User { error } => (Range::<usize>::from(error), error.item.clone()),
     }
     .into()

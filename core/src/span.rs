@@ -68,14 +68,15 @@ impl<T> From<(usize, T, usize)> for Span<T> {
 }
 
 impl<T> Span<T> {
-    pub fn map<B, F>(&self, f: F) -> Span<B>
+    /// Map the item wrapped inside the span.
+    pub fn map<B, F>(self, f: F) -> Span<B>
     where
-        F: FnOnce(&T) -> B,
+        F: FnOnce(T) -> B,
     {
         Span {
             start: self.start,
             end: self.end,
-            item: f(&self.item),
+            item: f(self.item),
         }
     }
 }
