@@ -68,6 +68,8 @@ pub enum Token<'input> {
     Fn,
     #[token("->")]
     RArrow,
+    #[token("pub")]
+    Pub,
 
     /// token that represents lex errors
     #[error]
@@ -109,6 +111,7 @@ impl<'i> Display for Token<'i> {
 
             Token::Fn => "fn",
             Token::RArrow => "->",
+            Token::Pub => "pub",
 
             // this is an unsatisfying string representation
             Token::Error => "<unhandled>",

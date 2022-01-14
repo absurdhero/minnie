@@ -67,7 +67,7 @@ pub enum ExprKind<T> {
     Call(T, Vec<T>),
     Block(Vec<T>),
     // fields: name, params, return type, body
-    Function(ID, Vec<FormalParam>, Type, T),
+    Function(FuncExpr<T>),
     // fields: condition, then-arm, else-arm
     If(T, T, T),
     // fields: identifier, optional type, optional binding
@@ -88,6 +88,33 @@ pub enum Opcode {
     Div,
     Add,
     Sub,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FuncExpr<T> {
+    pub id: ID,
+    pub name: String,
+    pub params: Vec<FormalParam>,
+    pub returns: Type,
+    pub body: T,
+}
+
+impl<T> FuncExpr<T> {
+    pub fn new(
+        name: String,
+        id: ID,
+        params: Vec<FormalParam>,
+        returns: Type,
+        body: T,
+    ) -> FuncExpr<T> {
+        FuncExpr {
+            name,
+            id,
+            params,
+            returns,
+            body,
+        }
+    }
 }
 
 /// A parameter declaration in a function signature.
@@ -341,9 +368,15 @@ impl UntypedSpExpr {
                     );
                 }
             }
-            UntypedExprKind::Function(name, params, returns, body) => {
-                // extend the lexical environment with an incomplete entry for the function
-                let func_id = lexical_env.add_func(name.name(), Type::Unknown);
+            UntypedExprKind::Function(FuncExpr {
+                name,
+                id,
+                params,
+                returns,
+                body,
+            }) => {
+                // add the name to the environment
+                let id = lexical_env.add_func(&id, Type::Unknown);
 
                 // create a new lexical environment for the function body
                 let mut func_env = LexicalEnv::new(lexical_env);
@@ -364,16 +397,19 @@ impl UntypedSpExpr {
                 };
 
                 // fill in the outer environment with the function's fully resolved type
-                lexical_env.update_func(name.name(), func_ty.clone());
+                if matches!(id, ID::FuncId(_)) {
+                    lexical_env.update_func(&name, func_ty.clone());
+                }
 
                 // return the typed function
                 Expr::new(
-                    ExprKind::Function(
-                        func_id,
-                        typed_params,
+                    ExprKind::Function(FuncExpr {
+                        name,
+                        id,
+                        params: typed_params,
                         returns,
-                        body.into_typed(&mut func_env),
-                    ),
+                        body: body.into_typed(&mut func_env),
+                    }),
                     func_ty,
                 )
             }
@@ -480,7 +516,7 @@ impl TypedSpExpr {
                     |i, b| Box::new(i.chain(b)),
                 ),
             )),
-            TypedExprKind::Function(_, _, _, block) => block.errors(roots_only),
+            TypedExprKind::Function(FuncExpr { body, .. }) => body.errors(roots_only),
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
                     .chain(t.errors(roots_only))
@@ -508,7 +544,7 @@ impl TypedSpExpr {
                     }
                     local[*id] = ty.clone();
                 }
-                ID::FuncId(_) => {}
+                ID::FuncId(_) | ID::PubFuncId(_) => {}
                 ID::Name(_) => {
                     panic!("local_identifiers called on an untransformed tree")
                 }
@@ -538,6 +574,7 @@ impl TypedSpExpr {
                         }
                         local[*id] = e.ty.clone();
                     }
+                    ID::PubFuncId(_) => {}
                     ID::Name(_) => {
                         panic!("local_identifiers called on an untransformed tree")
                     }
@@ -555,19 +592,40 @@ pub struct ParseResult {
     pub module_env: ModuleEnv,
 }
 
+pub struct Module {
+    /// Top level functions
+    pub functions: Vec<TypedSpExpr>,
+    pub module_env: ModuleEnv,
+}
+
+impl From<ParseResult> for Module {
+    fn from(result: ParseResult) -> Self {
+        let ParseResult { ast, module_env } = result;
+        if let ExprKind::Block(exprs) = ast.item.kind {
+            Module {
+                // Currently, only functions exist at the top-level.
+                functions: exprs,
+                module_env,
+            }
+        } else {
+            panic!("root of ast is not a block");
+        }
+    }
+}
+
 /// Parse program text and return its type-checked AST
 ///
 /// # arguments
 ///
 /// * `program` - The program text for a single module
-pub fn parse_module(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+pub fn parse_module(program: &str) -> Result<Module, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
 
     let parser = grammar::ProgramParser::new();
     let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
-    collate_errors(lexer, recovered_errors, result)
+    validate(lexer, recovered_errors, result).map(Module::from)
 }
 
 /// Parse an expression and return its type-checked AST
@@ -582,7 +640,7 @@ pub fn parse_expr(expr_str: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
     let parser = grammar::ReplExpressionParser::new();
     let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
-    collate_errors(lexer, recovered_errors, result)
+    validate(lexer, recovered_errors, result)
 }
 
 /// Parse an expression and wrap it in a top-level function.
@@ -590,21 +648,27 @@ pub fn parse_expr(expr_str: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
 /// # arguments
 ///
 /// * `expr` - The text of an expression
-pub fn parse_expr_as_top_level(str_expr: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+pub fn parse_expr_as_top_level(str_expr: &str) -> Result<Module, Vec<Span<AstError>>> {
     let result = parse_expr(str_expr);
     result.map(|ParseResult { ast, module_env }| {
         let range = ast.range();
         let ty = ast.ty.clone();
-        let wrapper = ExprKind::Function(ID::FuncId(0), vec![], ty.clone(), ast);
+        let wrapper = ExprKind::Function(FuncExpr {
+            name: "main".to_string(),
+            id: ID::PubFuncId("main".to_string()),
+            params: vec![],
+            returns: ty.clone(),
+            body: ast,
+        });
         let wrapper = TypedSpExpr::new(range.start, range.end, wrapper, ty);
-        ParseResult {
-            ast: wrapper,
+        Module {
+            functions: vec![wrapper],
             module_env,
         }
     })
 }
 
-fn collate_errors(
+fn validate(
     lexer: Lexer,
     recovered_errors: Vec<ErrorRecovery>,
     result: Result<UntypedSpExpr, ParseError>,
@@ -705,7 +769,7 @@ impl<'a> LexicalEnv<'a> {
             bindings: RefCell::new(HashMap::new()),
             parent: None,
             var_count: 0,
-            func_count: 0,
+            func_count: module_env.imports.len(),
             imports: module_env,
         }
     }
@@ -731,9 +795,15 @@ impl<'a> LexicalEnv<'a> {
     ///
     /// Functions have their own numeric indexes separate from variables
     /// because webassembly tracks them in their own index space.
-    fn add_func(&mut self, name: &str, ty: Type) -> ID {
-        let new_id = ID::FuncId(self.func_count);
-        self.func_count += 1;
+    fn add_func(&mut self, id: &ID, ty: Type) -> ID {
+        let (new_id, name) = match id {
+            ID::Name(name) => {
+                self.func_count += 1;
+                (ID::FuncId(self.func_count - 1), name)
+            }
+            pub_id @ ID::PubFuncId(name) => (pub_id.clone(), name),
+            _ => panic!("tried to add a function with an unsupported ID variant"),
+        };
         self.bindings
             .borrow_mut()
             .insert(name.to_string(), (new_id.clone(), ty));

@@ -171,7 +171,7 @@ mod tests {
         match result {
             Ok(source) => {
                 runtime.add_module(source)?;
-                Ok(runtime.eval("top_level")?)
+                Ok(runtime.eval("main")?)
             }
             Err(errors) => Err(TestError::Other {
                 msgs: errors.into_iter().map(|e| e.to_string()).collect(),

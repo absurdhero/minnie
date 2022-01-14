@@ -1,4 +1,4 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, Opcode};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, Opcode};
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
@@ -33,6 +33,7 @@ extern {
         "bool" => Token::Bool,
         "fn" => Token::Fn,
         "->" => Token::RArrow,
+        "pub" => Token::Pub,
     }
 }
 
@@ -187,8 +188,18 @@ IfExpr: UntypedExprKind = {
 // Functions
 
 Function: UntypedExprKind = {
- "fn" <id:ID> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> =>
-     UntypedExprKind::Function(ID::Name(id.to_string()), params, ret, block),
+    <v:Visibility?> "fn" <name:ID> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
+    let id = if v == Some("pub") {
+        ID::PubFuncId(name.to_string())
+    } else {
+        ID::Name(name.to_string())
+    };
+    UntypedExprKind::Function(FuncExpr::new(name.to_string(), id, params, ret, block))
+  },
+}
+
+Visibility: &'static str = {
+    "pub" => "pub",
 }
 
 FunctionParameters: Vec<FormalParam> = {
