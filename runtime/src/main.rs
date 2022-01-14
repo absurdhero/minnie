@@ -37,7 +37,10 @@ fn main() -> Result<()> {
     let source = fs::read_to_string(&file)?;
 
     // if the file is a source file, compile it first.
-    let bytecode = if file_path.extension() == Some(OsStr::new("mi")) {
+    let is_source = file_path.extension() == Some(OsStr::new("min"))
+        || file_path.extension() == Some(OsStr::new("rs"));
+
+    let bytecode = if is_source {
         let compiler = Compiler::new();
         match compiler.compile(file_name, &source) {
             Ok(bytecode) => bytecode,
@@ -47,8 +50,7 @@ fn main() -> Result<()> {
             }
         }
     } else {
-        // Support bytecode files containing a single wasm function with no return value.
-        // This is sufficient until top-level functions are implemented.
+        // Support bytecode files containing a main function with no return value.
         ModuleSource {
             name: file_name.to_string(),
             wasm_text: source,

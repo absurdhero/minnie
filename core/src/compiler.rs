@@ -39,7 +39,7 @@ pub struct ModuleSource {
     pub name: String,
     /// wasm source code in the "wat" text format
     pub wasm_text: String,
-    /// The type of the return value that results from running this code
+    /// The return value of the `main` function
     pub return_type: Type,
 }
 
