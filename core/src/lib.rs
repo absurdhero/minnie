@@ -49,7 +49,7 @@ pub fn execute(modules: Vec<ModuleSource>) -> Result<(), anyhow::Error> {
         runtime.add_module(module)?;
     }
 
-    match runtime.eval("top_level") {
+    match runtime.eval("main") {
         Ok(_) => Ok(()),
         Err(err) => Err(anyhow::Error::new(err)),
     }

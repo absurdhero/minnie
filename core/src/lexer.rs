@@ -9,6 +9,13 @@ use thiserror::Error;
 ///! Inspired by the LALRPOP Logos integration example
 ///! at https://github.com/segeljakt/logos-lalrpop
 
+/// Tokens
+///
+/// The Logos tokenizer matches most-specific patterns first
+/// and it supports a subset of regex without greedy matching.
+///
+/// When adding new tokens, refer to https://github.com/maciejhirsz/logos/issues/133
+/// to find working regular expressions for common language constructs.
 #[derive(Logos, Copy, Clone, Debug, PartialEq)]
 pub enum Token<'input> {
     #[token("true")]
@@ -56,7 +63,15 @@ pub enum Token<'input> {
     #[token("bool")]
     Bool,
 
-    // token that represents lex errors
+    // functions
+    #[token("fn")]
+    Fn,
+    #[token("->")]
+    RArrow,
+    #[token("pub")]
+    Pub,
+
+    /// token that represents lex errors
     #[error]
     // skip whitespace
     #[regex(r"[ \t\n\f]+", logos::skip)]
@@ -93,6 +108,10 @@ impl<'i> Display for Token<'i> {
             Token::Colon => ":",
             Token::Int => "int",
             Token::Bool => "bool",
+
+            Token::Fn => "fn",
+            Token::RArrow => "->",
+            Token::Pub => "pub",
 
             // this is an unsatisfying string representation
             Token::Error => "<unhandled>",

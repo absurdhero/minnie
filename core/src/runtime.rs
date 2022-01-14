@@ -167,11 +167,11 @@ mod tests {
 
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
-        let result = compiler.compile("test", expr);
+        let result = compiler.compile_expression("test", expr);
         match result {
             Ok(source) => {
                 runtime.add_module(source)?;
-                Ok(runtime.eval("top_level")?)
+                Ok(runtime.eval("main")?)
             }
             Err(errors) => Err(TestError::Other {
                 msgs: errors.into_iter().map(|e| e.to_string()).collect(),

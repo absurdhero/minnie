@@ -18,7 +18,7 @@ impl Eval {
 
     pub fn eval(&mut self, source: ModuleSource) -> Result<ReturnValue, RuntimeError> {
         self.runtime.add_module(source)?;
-        self.runtime.eval("top_level")
+        self.runtime.eval("main")
     }
 }
 

@@ -3,6 +3,7 @@ use crate::module::ModuleEnv;
 use crate::span::Span;
 use crate::types::{Type, ID};
 use crate::{grammar, module};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
@@ -65,9 +66,11 @@ pub enum ExprKind<T> {
     Op(T, Opcode, T),
     Call(T, Vec<T>),
     Block(Vec<T>),
-    // condition, then-arm, else-arm
+    // fields: name, params, return type, body
+    Function(FuncExpr<T>),
+    // fields: condition, then-arm, else-arm
     If(T, T, T),
-    // identifier, optional type, optional binding
+    // fields: identifier, optional type, optional binding
     Let(ID, Option<Type>, Option<T>),
     // The error and the original node (if present)
     Error(ErrorNode<T>),
@@ -85,6 +88,45 @@ pub enum Opcode {
     Div,
     Add,
     Sub,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FuncExpr<T> {
+    pub id: ID,
+    pub name: String,
+    pub params: Vec<FormalParam>,
+    pub returns: Type,
+    pub body: T,
+}
+
+impl<T> FuncExpr<T> {
+    pub fn new(
+        name: String,
+        id: ID,
+        params: Vec<FormalParam>,
+        returns: Type,
+        body: T,
+    ) -> FuncExpr<T> {
+        FuncExpr {
+            name,
+            id,
+            params,
+            returns,
+            body,
+        }
+    }
+}
+
+/// A parameter declaration in a function signature.
+///
+/// The representation will need to change once pattern arguments are supported.
+/// The `name` field will be replaced by a pattern expression and a new AST
+/// transformation will replace the pattern with unnamed local variable ID and
+/// insert destructuring expressions into the AST at the beginning of the function's block.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FormalParam {
+    pub name: ID,
+    pub ty: Type,
 }
 
 /// Typed Expression
@@ -301,7 +343,7 @@ impl UntypedSpExpr {
                 let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
-                    let uid = lexical_env.add_var(id.name(), ty.clone());
+                    let uid = lexical_env.add_var(id.name(), &ty);
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
                             bind_expr = type_error_correction(ty.clone(), bind_expr)
@@ -312,7 +354,7 @@ impl UntypedSpExpr {
                     }
                 } else if let Some(expr) = binding {
                     let ty = &expr.ty;
-                    let uid = lexical_env.add_var(id.name(), ty.clone());
+                    let uid = lexical_env.add_var(id.name(), ty);
                     Expr::new(ExprKind::Let(uid, Some(ty.clone()), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
@@ -325,6 +367,51 @@ impl UntypedSpExpr {
                         "Not supported: untyped `let` with no binding.",
                     );
                 }
+            }
+            UntypedExprKind::Function(FuncExpr {
+                name,
+                id,
+                params,
+                returns,
+                body,
+            }) => {
+                // add the name to the environment
+                let id = lexical_env.add_func(&id, Type::Unknown);
+
+                // create a new lexical environment for the function body
+                let mut func_env = LexicalEnv::new(lexical_env);
+
+                // register and track the IDs of each parameter
+                let typed_params: Vec<FormalParam> = params
+                    .into_iter()
+                    .map(|p| FormalParam {
+                        name: func_env.add_var(p.name.name(), &p.ty),
+                        ty: p.ty,
+                    })
+                    .collect();
+
+                // generate the type signature of this function
+                let func_ty = Type::Function {
+                    params: typed_params.iter().map(|p| p.ty.clone()).collect(),
+                    returns: Box::new(returns.clone()),
+                };
+
+                // fill in the outer environment with the function's fully resolved type
+                if matches!(id, ID::FuncId(_)) {
+                    lexical_env.update_func(&name, func_ty.clone());
+                }
+
+                // return the typed function
+                Expr::new(
+                    ExprKind::Function(FuncExpr {
+                        name,
+                        id,
+                        params: typed_params,
+                        returns,
+                        body: body.into_typed(&mut func_env),
+                    }),
+                    func_ty,
+                )
             }
         };
         (self.start, Box::new(typed_kind), self.end).into()
@@ -429,7 +516,7 @@ impl TypedSpExpr {
                     |i, b| Box::new(i.chain(b)),
                 ),
             )),
-
+            TypedExprKind::Function(FuncExpr { body, .. }) => body.errors(roots_only),
             TypedExprKind::If(c, t, f) => Box::new(
                 c.errors(roots_only)
                     .chain(t.errors(roots_only))
@@ -457,7 +544,7 @@ impl TypedSpExpr {
                     }
                     local[*id] = ty.clone();
                 }
-                ID::FuncId(_) => {}
+                ID::FuncId(_) | ID::PubFuncId(_) => {}
                 ID::Name(_) => {
                     panic!("local_identifiers called on an untransformed tree")
                 }
@@ -487,6 +574,7 @@ impl TypedSpExpr {
                         }
                         local[*id] = e.ty.clone();
                     }
+                    ID::PubFuncId(_) => {}
                     ID::Name(_) => {
                         panic!("local_identifiers called on an untransformed tree")
                     }
@@ -504,18 +592,87 @@ pub struct ParseResult {
     pub module_env: ModuleEnv,
 }
 
+pub struct Module {
+    /// Top level functions
+    pub functions: Vec<TypedSpExpr>,
+    pub module_env: ModuleEnv,
+}
+
+impl From<ParseResult> for Module {
+    fn from(result: ParseResult) -> Self {
+        let ParseResult { ast, module_env } = result;
+        if let ExprKind::Block(exprs) = ast.item.kind {
+            Module {
+                // Currently, only functions exist at the top-level.
+                functions: exprs,
+                module_env,
+            }
+        } else {
+            panic!("root of ast is not a block");
+        }
+    }
+}
+
 /// Parse program text and return its type-checked AST
 ///
 /// # arguments
 ///
 /// * `program` - The program text for a single module
-pub fn parse(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+pub fn parse_module(program: &str) -> Result<Module, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
 
     let parser = grammar::ProgramParser::new();
     let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
+    validate(lexer, recovered_errors, result).map(Module::from)
+}
+
+/// Parse an expression and return its type-checked AST
+///
+/// # arguments
+///
+/// * `expr` - The text of an expression
+pub fn parse_expr(expr_str: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+    let mut lexer = Lexer::new(expr_str);
+    let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
+
+    let parser = grammar::ReplExpressionParser::new();
+    let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
+
+    validate(lexer, recovered_errors, result)
+}
+
+/// Parse an expression and wrap it in a top-level function.
+///
+/// # arguments
+///
+/// * `expr` - The text of an expression
+pub fn parse_expr_as_top_level(str_expr: &str) -> Result<Module, Vec<Span<AstError>>> {
+    let result = parse_expr(str_expr);
+    result.map(|ParseResult { ast, module_env }| {
+        let range = ast.range();
+        let ty = ast.ty.clone();
+        let wrapper = ExprKind::Function(FuncExpr {
+            name: "main".to_string(),
+            id: ID::PubFuncId("main".to_string()),
+            params: vec![],
+            returns: ty.clone(),
+            body: ast,
+        });
+        let wrapper = TypedSpExpr::new(range.start, range.end, wrapper, ty);
+        Module {
+            functions: vec![wrapper],
+            module_env,
+        }
+    })
+}
+
+fn validate(
+    lexer: Lexer,
+    recovered_errors: Vec<ErrorRecovery>,
+    result: Result<UntypedSpExpr, ParseError>,
+) -> Result<ParseResult, Vec<Span<AstError>>> {
     // convert lex errors into AstError
     let mut errors: Vec<Span<AstError>> = lexer
         .errors
@@ -581,7 +738,7 @@ fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
 #[derive(Debug)]
 pub struct LexicalEnv<'a> {
     // association of symbol to its unique ID and type
-    bindings: HashMap<String, (ID, Type)>,
+    bindings: RefCell<HashMap<String, (ID, Type)>>,
     parent: Option<&'a LexicalEnv<'a>>,
     func_count: usize,
     var_count: usize,
@@ -592,7 +749,7 @@ impl<'a> LexicalEnv<'a> {
     /// Create a new lexical scope inside of another one
     fn new(parent: &'a LexicalEnv) -> LexicalEnv<'a> {
         LexicalEnv {
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             parent: Some(parent),
             var_count: parent.var_count,
             func_count: parent.func_count,
@@ -609,10 +766,10 @@ impl<'a> LexicalEnv<'a> {
     ///  Until then, imports are controlled by the runtime a priori and imports are immutable.
     fn new_root(module_env: &'a ModuleEnv) -> LexicalEnv<'a> {
         LexicalEnv {
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             parent: None,
             var_count: 0,
-            func_count: 0,
+            func_count: module_env.imports.len(),
             imports: module_env,
         }
     }
@@ -623,30 +780,49 @@ impl<'a> LexicalEnv<'a> {
     /// WebAssembly tracks `locals` by unique incrementing number so this stage of compilation
     /// assigns numbers to each unique variable.
     ///
-    /// We are effectively performing "alpha-reduction", where a variable that shadows another
+    /// We are effectively performing "alpha-conversion", where a variable that shadows another
     /// gets its own ID distinct from the ID of variables by the same name in outer scopes.
-    fn add_var(&mut self, name: &str, ty: Type) -> ID {
+    fn add_var(&mut self, name: &str, ty: &Type) -> ID {
         let new_id = ID::VarId(self.var_count);
         self.var_count += 1;
-        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+        self.bindings
+            .borrow_mut()
+            .insert(name.to_string(), (new_id.clone(), ty.clone()));
         new_id
     }
 
     /// Add a new function to the environment
     ///
     /// Functions have their own numeric indexes separate from variables
-    /// because webassembly trackes them in their own index space.
-    fn add_func(&mut self, name: &str, ty: Type) -> ID {
-        let new_id = ID::FuncId(self.func_count);
-        self.func_count += 1;
-        self.bindings.insert(name.to_string(), (new_id.clone(), ty));
+    /// because webassembly tracks them in their own index space.
+    fn add_func(&mut self, id: &ID, ty: Type) -> ID {
+        let (new_id, name) = match id {
+            ID::Name(name) => {
+                self.func_count += 1;
+                (ID::FuncId(self.func_count - 1), name)
+            }
+            pub_id @ ID::PubFuncId(name) => (pub_id.clone(), name),
+            _ => panic!("tried to add a function with an unsupported ID variant"),
+        };
+        self.bindings
+            .borrow_mut()
+            .insert(name.to_string(), (new_id.clone(), ty));
         new_id
+    }
+
+    fn update_func(&self, name: &str, ty: Type) {
+        let mut bindings = self.bindings.borrow_mut();
+        let (id, _) = bindings
+            .remove(name)
+            .expect("could not update lexical mapping for non-existent function");
+        bindings.insert(name.to_string(), (id, ty));
     }
 
     /// Return the unique ID and Type of a variable name in this lexical scope or an outer
     /// scope, ascending upwards through the lexical environment up to the module scope.
     fn id_type(&self, name: &str) -> Option<(ID, Type)> {
         self.bindings
+            .borrow()
             .get(name)
             .cloned()
             .or_else(|| self.parent.and_then(|p| p.id_type(name)))
@@ -693,9 +869,9 @@ mod tests {
 
     macro_rules! parse_ok {
         ($s:literal) => {
-            let result = parse($s);
+            let result = parse_expr($s);
             assert!(result.is_ok(), "error: {:?}", result);
-            let parse_result = parse($s).unwrap();
+            let parse_result = parse_expr($s).unwrap();
             let error = parse_result.ast.errors(true).next();
             assert!(
                 error.is_none(),
@@ -708,14 +884,14 @@ mod tests {
 
     macro_rules! parse_fails {
         ($s:literal) => {
-            assert!(parse($s).is_err())
+            assert!(parse_expr($s).is_err())
         };
     }
 
     macro_rules! ast_error {
         ($s:literal) => {
             assert!(
-                !parse($s).unwrap().ast.errors(true).next().is_none(),
+                !parse_expr($s).unwrap().ast.errors(true).next().is_none(),
                 "no errors in AST for expression: {:?}",
                 $s
             )
@@ -728,7 +904,7 @@ mod tests {
             let mut env = LexicalEnv::new_root(&imports);
              $(
                 assert_eq!(UntypedSpExpr::from($rhs).into_typed(&mut env).kind,
-                           parse($lhs).map(|b| b.ast.item.kind).unwrap());
+                           parse_expr($lhs).map(|b| b.ast.item.kind).unwrap());
              )+
         }};
     }

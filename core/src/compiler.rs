@@ -1,12 +1,13 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use log::Level;
 use thiserror::Error;
 
 use crate::ast;
 use crate::ast::ExprKind::Identifier;
-use crate::ast::{ErrorNode, ErrorNodeKind, Expr, ExprKind, Opcode, ParseResult, TypedSpExpr};
+use crate::ast::{
+    ErrorNode, ErrorNodeKind, Expr, ExprKind, FuncExpr, Opcode, TypedExprKind, TypedSpExpr,
+};
 use crate::span::Span;
 use crate::types::{Type, ID};
 
@@ -85,12 +86,48 @@ impl<'a> Compiler {
         file_name: &str,
         program: &'a str,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
-        let ParseResult {
-            ast: expr,
+        self.compile_ast(
+            file_name,
+            ast::parse_module(program).map_err(|e| self.map_parse_error(e))?,
+        )
+    }
+
+    /// Compiles a single expression as a webassembly function
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - The base name of the file (without extension)
+    /// * `text` - An expression in text form
+    pub fn compile_expression(
+        &self,
+        file_name: &str,
+        text: &'a str,
+    ) -> Result<ModuleSource, Vec<CompilerError>> {
+        let parse_result =
+            ast::parse_expr_as_top_level(text).map_err(|e| self.map_parse_error(e))?;
+
+        self.compile_ast(file_name, parse_result)
+    }
+
+    /// Compiles a parsed AST
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - The base name of the file (without extension)
+    /// * `parse_result` - A successfully parsed AST
+    fn compile_ast(
+        &self,
+        file_name: &str,
+        module: ast::Module,
+    ) -> Result<ModuleSource, Vec<CompilerError>> {
+        let ast::Module {
+            functions: exprs,
             module_env,
-        } = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
-        let ast_errors: Vec<CompilerError> = expr
-            .errors(true)
+        } = module;
+        let ast_errors: Vec<CompilerError> = exprs
+            .iter()
+            .map(|e| e.errors(true))
+            .flatten()
             .into_iter()
             .map(|n| match n {
                 ErrorNode::<TypedSpExpr> {
@@ -100,7 +137,7 @@ impl<'a> Compiler {
                     let child_errors = top_expr
                         .errors(false)
                         .map(|err_node| match &err_node.expr {
-                            None => (expr.start..expr.end, err_node.kind.clone()).into(),
+                            None => (top_expr.start..top_expr.end, err_node.kind.clone()).into(),
                             Some(e) => (Range::<usize>::from(e), err_node.kind.clone()).into(),
                         })
                         .collect();
@@ -122,13 +159,10 @@ impl<'a> Compiler {
             return Err(ast_errors);
         }
 
-        if log_enabled!(Level::Trace) {
-            trace!("ast:\n{:#?}\n", expr.item.kind);
-        }
+        trace!("ast:\n{:#?}\n", exprs);
 
-        let mut identifiers = vec![];
         let mut import_decls: Vec<String> = vec![];
-        let mut instructions: Vec<String> = vec![];
+        let mut function_definitions: Vec<String> = vec![];
 
         // declare imports
         for (index, (name, ty)) in module_env.imports.iter().enumerate() {
@@ -142,32 +176,43 @@ impl<'a> Compiler {
             ))
         }
 
-        // declare locals
-        expr.local_identifiers(&mut identifiers);
-        for (id, ty) in identifiers.iter().enumerate() {
-            let type_descriptor = match ty {
-                // the funcref type is i32. Maybe we need Type::FuncRef?
-                Type::Function { .. } => "i32".to_string(),
-                _ => ty.wasm_type(),
-            };
-            instructions.push(format!("(local ${} {})", id, type_descriptor))
+        let mut main_func: Option<&FuncExpr<TypedSpExpr>> = None;
+        for expr in exprs.iter() {
+            match &expr.kind {
+                TypedExprKind::Function(func) => {
+                    if &func.name == "main" {
+                        main_func = Some(func);
+                    }
+                    function_definitions.push(self.function_def(func))
+                }
+                _ => {
+                    panic!("only functions can exist at the top level")
+                }
+            }
         }
 
         // generate table of function references for all imports and
         // functions defined in this module.
+        let total_funcs = import_decls.len() + exprs.len();
         let funcrefs = format!(
-            "(table {} funcref)\n  (elem (i32.const 0) {})",
-            import_decls.len(),
+            "(table {} funcref)\n  (elem (i32.const 0) {} {})",
+            total_funcs,
             (0..(import_decls.len()))
                 .into_iter()
-                .map(|n| format!("${}", n.to_string()))
+                .map(|n| format!("${}", n))
                 .collect::<Vec<_>>()
                 .join(" "),
+            exprs
+                .iter()
+                .filter_map(|e| {
+                    match &e.kind {
+                        TypedExprKind::Function(f) => Some(format!("${}", &f.id)),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join(" ")
         );
-
-        self.codegen(&*expr, &mut instructions);
-
-        trace!("instructions:\n{:?}", instructions);
 
         let output = format!(
             r#"
@@ -177,21 +222,55 @@ impl<'a> Compiler {
   ;; funcref table
   {}
   ;; function declarations
-  (func (export "top_level") (result {})
-    {}
-  )
+  {}
 )
 "#,
             import_decls.join("\n  "),
             funcrefs,
-            expr.ty.wasm_type(),
-            instructions.join("\n    "),
+            function_definitions.join("\n  "),
         );
+
         Ok(ModuleSource {
             name: file_name.to_string(),
             wasm_text: output,
-            return_type: expr.ty.clone(),
+            return_type: main_func.map_or(Type::Void, |f| f.body.ty.clone()),
         })
+    }
+
+    fn function_def(&self, func: &FuncExpr<TypedSpExpr>) -> String {
+        let mut instructions: Vec<String> = vec![];
+        let mut identifiers = vec![];
+
+        // declare locals
+        func.body.local_identifiers(&mut identifiers);
+        for (id, ty) in identifiers.iter().enumerate() {
+            let type_descriptor = match ty {
+                // the funcref type is i32. Maybe we need Type::FuncRef?
+                Type::Function { .. } => "i32".to_string(),
+                _ => ty.wasm_type(),
+            };
+            instructions.push(format!("(local ${} {})", id, type_descriptor))
+        }
+
+        self.codegen(&*func.body, &mut instructions);
+
+        trace!("instructions:\n{:?}", instructions);
+        format!(
+            r#"
+  (func ${} (result {})
+    {}
+  ){}
+"#,
+            func.id,
+            func.body.ty.wasm_type(),
+            instructions.join("\n    "),
+            // export public functions
+            if let ID::PubFuncId(name) = &func.id {
+                format!(r#"(export "{0}" (func ${0}))"#, name)
+            } else {
+                "".to_string()
+            }
+        )
     }
 
     fn codegen(&self, expr: &Expr, instructions: &mut Vec<String>) {
@@ -218,6 +297,7 @@ impl<'a> Compiler {
             ExprKind::Number(n) => push!("i64.const {}", n),
             ExprKind::Identifier(id) => match id {
                 ID::Name(_) => unreachable!(),
+                ID::PubFuncId(_) => push!("i32.const ${}", id.name()),
                 ID::VarId(_) => push!("local.get ${}", id.id()),
                 ID::FuncId(_) => push!("i32.const {}", id.id()),
             },
@@ -246,6 +326,7 @@ impl<'a> Compiler {
                     push!("call_indirect {}", op.ty.wasm_type())
                 }
             }
+            ExprKind::Function(_) => {}
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);

@@ -89,7 +89,7 @@ fn repl(compiler: Compiler, eval: &mut Eval) -> Result<()> {
         let fake_path = format!("REPL#{}", expression_counter);
         expression_counter += 1;
 
-        let result = compiler.compile("repl", &input);
+        let result = compiler.compile_expression("repl", &input);
 
         match result {
             Ok(wat) => {

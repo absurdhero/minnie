@@ -17,40 +17,6 @@ pub fn add_base_to_linker(linker: &mut Linker<WasiCtx>) -> anyhow::Result<&mut L
     linker.func_wrap("base", "itoa", |param: i64| param + '0' as i64)
 }
 
-#[derive(Debug)]
-pub struct ModuleEnv {
-    // association of symbol to its unique index and type
-    pub imports: Vec<(String, Type)>,
-    pub by_name: HashMap<String, usize>,
-}
-
-impl ModuleEnv {
-    pub fn new() -> ModuleEnv {
-        ModuleEnv {
-            imports: vec![],
-            by_name: HashMap::new(),
-        }
-    }
-
-    pub fn add_import(&mut self, name: &str, ty: Type) {
-        if self.by_name.contains_key(name) {
-            self.imports[*self.by_name.get(name).unwrap()] = (name.to_string(), ty);
-        } else {
-            self.by_name.insert(name.to_string(), self.imports.len());
-            self.imports.push((name.to_string(), ty));
-        }
-    }
-
-    pub fn id_type(&self, name: &str) -> Option<(ID, Type)> {
-        self.by_name.get(name).and_then(|i| {
-            return self
-                .imports
-                .get(*i)
-                .map(|(_, ty)| (ID::FuncId(*i), ty.clone()));
-        })
-    }
-}
-
 /// Temporary canned module environment until programs can declare their own imports.
 pub fn basis_imports() -> ModuleEnv {
     let mut module_env = ModuleEnv::new();
@@ -69,4 +35,41 @@ pub fn basis_imports() -> ModuleEnv {
         },
     );
     module_env
+}
+
+/// A module's global environment
+#[derive(Debug, Clone)]
+pub struct ModuleEnv {
+    // association of symbol to its unique index and type
+    pub imports: Vec<(String, Type)>,
+    pub imports_by_name: HashMap<String, usize>,
+}
+
+impl ModuleEnv {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> ModuleEnv {
+        ModuleEnv {
+            imports: vec![],
+            imports_by_name: HashMap::new(),
+        }
+    }
+
+    pub fn add_import(&mut self, name: &str, ty: Type) {
+        if self.imports_by_name.contains_key(name) {
+            self.imports[*self.imports_by_name.get(name).unwrap()] = (name.to_string(), ty);
+        } else {
+            self.imports_by_name
+                .insert(name.to_string(), self.imports.len());
+            self.imports.push((name.to_string(), ty));
+        }
+    }
+
+    pub fn id_type(&self, name: &str) -> Option<(ID, Type)> {
+        self.imports_by_name.get(name).and_then(|i| {
+            return self
+                .imports
+                .get(*i)
+                .map(|(_, ty)| (ID::FuncId(*i), ty.clone()));
+        })
+    }
 }

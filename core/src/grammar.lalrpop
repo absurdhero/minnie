@@ -1,4 +1,4 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, Opcode};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, Opcode};
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
@@ -31,6 +31,9 @@ extern {
         "false" => Token::False,
         "int" => Token::Int,
         "bool" => Token::Bool,
+        "fn" => Token::Fn,
+        "->" => Token::RArrow,
+        "pub" => Token::Pub,
     }
 }
 
@@ -38,11 +41,20 @@ extern {
 Sp<Rule>: UntypedSpExpr =
     <l: @L> <rule: Rule> <r: @R> => (l, Box::new(rule.into()), r).into();
 
-// Root of the grammar
+// Root of a module
 pub Program: UntypedSpExpr = {
-    Sp<Sequence>
+    Sp<Module>,
 }
-pub Sequence: UntypedExprKind = {
+
+pub Module: UntypedExprKind = {
+        Sequence<Sp<Function>> => UntypedExprKind::Block(<>),
+}
+
+// Root of the REPL
+pub ReplExpression: UntypedSpExpr = {
+    Sp<ExpressionList>,
+}
+pub ExpressionList: UntypedExprKind = {
     <mut v:MaybeStatements> => {
         // if the program has just one statement, unwrap it.
         if v.len() == 1 {
@@ -65,7 +77,7 @@ MaybeStatements: Vec<UntypedSpExpr> = {
 
 #[inline]
 Statements: Vec<UntypedSpExpr> = {
-    Sequence1<Statement>
+    Sequence1<Sp<Statement>>
 };
 
 Statement: UntypedExprKind = {
@@ -96,7 +108,7 @@ ExpressionStatement: UntypedExprKind = {
 }
 
 LetStatement: UntypedExprKind = {
-    "let" <i:ID> <t:MaybeTyAscription> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
+    "let" <i:ID> <t:TypeAscription?> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
 };
 
 Block: UntypedExprKind = {
@@ -104,14 +116,14 @@ Block: UntypedExprKind = {
 };
 
 CallExpression: UntypedExprKind = {
-    <func:Sp<ExpressionWithoutBlock>> "(" <params:CommaNoTrail<Expression>> ")" =>
+    <func:Sp<ExpressionWithoutBlock>> "(" <params:CommaNoTrail<Sp<Expression>>> ")" =>
        UntypedExprKind::Call(func, params)
 }
 
 // Type grammar
 
-MaybeTyAscription: Option<Type> = {
-    (":" <TySum>)?
+TypeAscription: Type = {
+    ":" <TySum>
 };
 
 MaybeInitExpr: Option<UntypedSpExpr> = {
@@ -126,6 +138,7 @@ ty: Type = {
   TyPrim,
   "(" ")" => Type::Void,
 };
+
 TyPrim: Type = {
   "int" => Type::Int64,
   "bool" => Type::Bool,
@@ -172,39 +185,78 @@ IfExpr: UntypedExprKind = {
     "if" <c:Sp<ExpressionWithoutBlock>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),
 }
 
+// Functions
+
+Function: UntypedExprKind = {
+    <v:Visibility?> "fn" <name:ID> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
+    let id = if v == Some("pub") {
+        ID::PubFuncId(name.to_string())
+    } else {
+        ID::Name(name.to_string())
+    };
+    UntypedExprKind::Function(FuncExpr::new(name.to_string(), id, params, ret, block))
+  },
+}
+
+Visibility: &'static str = {
+    "pub" => "pub",
+}
+
+FunctionParameters: Vec<FormalParam> = {
+    CommaNoTrail<FunctionParam>,
+}
+
+// Does not support patterns yet.
+// It would also be nice to make the type optional
+// but that will require more complex type inference.
+FunctionParam: FormalParam = {
+    <id:ID> <ty:TypeAscription> => FormalParam { name: ID::Name(id.to_string()), ty },
+}
+
+FunctionReturnType: Type = {
+    "->" <ty>,
+    () => Type::Void,
+}
+
 
 // Macros for delimited lists
 
 #[inline]
-Comma1NoTrail<E>: Vec<UntypedSpExpr> = {
+Comma1NoTrail<E>: Vec<E> = {
     Delimited1<E, ",">
 };
 
 #[inline]
-CommaNoTrail<E>: Vec<UntypedSpExpr> = {
+CommaNoTrail<E>: Vec<E> = {
     Delimited<E, ",">
 };
 
 
 #[inline]
-Delimited<E, D>: Vec<UntypedSpExpr> = {
+Delimited<E, D>: Vec<E> = {
     Delimited1<E, D>,
     () => vec![],
 };
 
 
-Delimited1<E, D>: Vec<UntypedSpExpr> = {
-    <mut v:Delimited1<E, D>> D <e:Sp<E>> => {
+Delimited1<E, D>: Vec<E> = {
+    <mut v:Delimited1<E, D>> D <e:E> => {
         v.push(e);
         v
     },
-    Sp<E> => vec![<>],
+    E => vec![<>],
 };
 
-Sequence1<E>: Vec<UntypedSpExpr> = {
-    <mut v:Sequence1<E>> <e:Sp<E>> => {
+#[inline]
+Sequence<E>: Vec<E> = {
+    Sequence1<E>,
+    () => vec![],
+};
+
+Sequence1<E>: Vec<E> = {
+    <mut v:Sequence1<E>> <e:E> => {
         v.push(e);
         v
     },
-    Sp<E> => vec![<>],
+    E => vec![<>],
 };
