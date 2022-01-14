@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use log::Level;
 use thiserror::Error;
 
 use crate::ast;
@@ -85,10 +84,44 @@ impl<'a> Compiler {
         file_name: &str,
         program: &'a str,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
+        self.compile_ast(
+            file_name,
+            ast::parse_module(program).map_err(|e| self.map_parse_error(e))?,
+        )
+    }
+
+    /// Compiles a single expression as a webassembly function
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - The base name of the file (without extension)
+    /// * `text` - An expression in text form
+    pub fn compile_expression(
+        &self,
+        file_name: &str,
+        text: &'a str,
+    ) -> Result<ModuleSource, Vec<CompilerError>> {
+        let parse_result =
+            ast::parse_expr_as_top_level(text).map_err(|e| self.map_parse_error(e))?;
+
+        self.compile_ast(file_name, parse_result)
+    }
+
+    /// Compiles a parsed AST
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - The base name of the file (without extension)
+    /// * `parse_result` - A successfully parsed AST
+    fn compile_ast(
+        &self,
+        file_name: &str,
+        parse_result: ParseResult,
+    ) -> Result<ModuleSource, Vec<CompilerError>> {
         let ParseResult {
             ast: expr,
             module_env,
-        } = ast::parse(program).map_err(|e| self.map_parse_error(e))?;
+        } = parse_result;
         let ast_errors: Vec<CompilerError> = expr
             .errors(true)
             .into_iter()
@@ -122,9 +155,7 @@ impl<'a> Compiler {
             return Err(ast_errors);
         }
 
-        if log_enabled!(Level::Trace) {
-            trace!("ast:\n{:#?}\n", expr.item.kind);
-        }
+        trace!("ast:\n{:#?}\n", expr.item.kind);
 
         let mut identifiers = vec![];
         let mut import_decls: Vec<String> = vec![];
@@ -246,7 +277,7 @@ impl<'a> Compiler {
                     push!("call_indirect {}", op.ty.wasm_type())
                 }
             }
-            ExprKind::Function(name, params, returns, block) => {}
+            ExprKind::Function(_name, _params, _returns, _block) => {}
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);

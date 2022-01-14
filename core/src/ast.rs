@@ -560,13 +560,55 @@ pub struct ParseResult {
 /// # arguments
 ///
 /// * `program` - The program text for a single module
-pub fn parse(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+pub fn parse_module(program: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
     let mut lexer = Lexer::new(program);
     let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
 
     let parser = grammar::ProgramParser::new();
     let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
 
+    collate_errors(lexer, recovered_errors, result)
+}
+
+/// Parse an expression and return its type-checked AST
+///
+/// # arguments
+///
+/// * `expr` - The text of an expression
+pub fn parse_expr(expr_str: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+    let mut lexer = Lexer::new(expr_str);
+    let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
+
+    let parser = grammar::ReplExpressionParser::new();
+    let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
+
+    collate_errors(lexer, recovered_errors, result)
+}
+
+/// Parse an expression and wrap it in a top-level function.
+///
+/// # arguments
+///
+/// * `expr` - The text of an expression
+pub fn parse_expr_as_top_level(str_expr: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
+    let result = parse_expr(str_expr);
+    result.map(|ParseResult { ast, module_env }| {
+        let range = ast.range();
+        let ty = ast.ty.clone();
+        let wrapper = ExprKind::Function(ID::FuncId(0), vec![], ty.clone(), ast);
+        let wrapper = TypedSpExpr::new(range.start, range.end, wrapper, ty);
+        ParseResult {
+            ast: wrapper,
+            module_env,
+        }
+    })
+}
+
+fn collate_errors(
+    lexer: Lexer,
+    recovered_errors: Vec<ErrorRecovery>,
+    result: Result<UntypedSpExpr, ParseError>,
+) -> Result<ParseResult, Vec<Span<AstError>>> {
     // convert lex errors into AstError
     let mut errors: Vec<Span<AstError>> = lexer
         .errors
@@ -674,7 +716,7 @@ impl<'a> LexicalEnv<'a> {
     /// WebAssembly tracks `locals` by unique incrementing number so this stage of compilation
     /// assigns numbers to each unique variable.
     ///
-    /// We are effectively performing "alpha-reduction", where a variable that shadows another
+    /// We are effectively performing "alpha-conversion", where a variable that shadows another
     /// gets its own ID distinct from the ID of variables by the same name in outer scopes.
     fn add_var(&mut self, name: &str, ty: &Type) -> ID {
         let new_id = ID::VarId(self.var_count);
@@ -757,9 +799,9 @@ mod tests {
 
     macro_rules! parse_ok {
         ($s:literal) => {
-            let result = parse($s);
+            let result = parse_expr($s);
             assert!(result.is_ok(), "error: {:?}", result);
-            let parse_result = parse($s).unwrap();
+            let parse_result = parse_expr($s).unwrap();
             let error = parse_result.ast.errors(true).next();
             assert!(
                 error.is_none(),
@@ -772,14 +814,14 @@ mod tests {
 
     macro_rules! parse_fails {
         ($s:literal) => {
-            assert!(parse($s).is_err())
+            assert!(parse_expr($s).is_err())
         };
     }
 
     macro_rules! ast_error {
         ($s:literal) => {
             assert!(
-                !parse($s).unwrap().ast.errors(true).next().is_none(),
+                !parse_expr($s).unwrap().ast.errors(true).next().is_none(),
                 "no errors in AST for expression: {:?}",
                 $s
             )
@@ -792,7 +834,7 @@ mod tests {
             let mut env = LexicalEnv::new_root(&imports);
              $(
                 assert_eq!(UntypedSpExpr::from($rhs).into_typed(&mut env).kind,
-                           parse($lhs).map(|b| b.ast.item.kind).unwrap());
+                           parse_expr($lhs).map(|b| b.ast.item.kind).unwrap());
              )+
         }};
     }

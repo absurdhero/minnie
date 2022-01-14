@@ -50,6 +50,9 @@ pub Module: UntypedExprKind = {
 }
 
 // Root of the REPL
+pub ReplExpression: UntypedSpExpr = {
+    Sp<ExpressionList>,
+}
 pub ExpressionList: UntypedExprKind = {
     <mut v:MaybeStatements> => {
         // if the program has just one statement, unwrap it.

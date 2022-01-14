@@ -167,7 +167,7 @@ mod tests {
 
         // Compile from our source language to the wasm text format (wat)
         let compiler = Compiler::new();
-        let result = compiler.compile("test", expr);
+        let result = compiler.compile_expression("test", expr);
         match result {
             Ok(source) => {
                 runtime.add_module(source)?;
