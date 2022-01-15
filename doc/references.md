@@ -64,6 +64,8 @@ The official specification. Terse and contains little explanation.
 [Rust and WebAssembly](https://rustwasm.github.io/docs/book/introduction.html) -
 Practical techniques for working with WebAssembly using rust and cargo.
 
+[A Practical Guide to WebAssembly Memory](https://radu-matei.com/blog/practical-guide-to-wasm-memory/)
+
 ## Miscellaneous
 
 Writings that people interested in this project may also find interesting.
