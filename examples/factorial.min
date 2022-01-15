@@ -1,0 +1,11 @@
+fn factorial(num: int) -> int {
+    if num == 1 {
+        1
+    } else {
+        num * factorial(num - 1)
+    }
+}
+
+pub fn main() {
+    print_num(factorial(3));
+}

@@ -1,0 +1,12 @@
+/// Demonstrates parameter passing, local variables, and returning values.
+
+fn square_and_mul(i: int, j: int) -> int {
+    let square = i * i;
+    square * j
+}
+
+pub fn main() {
+    // returns 2 * 2 * 3 = 12
+    let result = square_and_mul(2, 3);
+    print_num(result);
+}
