@@ -17,6 +17,9 @@ extern {
         "*" => Token::Multiply,
         "/" => Token::Divide,
         "=" => Token::Eq,
+        "==" => Token::BoolEq,
+        "<" => Token::Lt,
+        ">" => Token::Gt,
         ";" => Token::Semi,
         "," => Token::Comma,
         "{" => Token::CurlyStart,
@@ -97,7 +100,8 @@ IfExpr,
 }
 
 ExpressionWithoutBlock: UntypedExprKind = {
-CallExpression,
+//CallExpression, // This is located inside Term for precedence reasons
+ComparisonExpression,
 ArithmeticOrLogicalExpression,
 }
 
@@ -116,7 +120,7 @@ Block: UntypedExprKind = {
 };
 
 CallExpression: UntypedExprKind = {
-    <func:Sp<ExpressionWithoutBlock>> "(" <params:CommaNoTrail<Sp<Expression>>> ")" =>
+    <func:Sp<Term>> "(" <params:CommaNoTrail<Sp<Expression>>> ")" =>
        UntypedExprKind::Call(func, params)
 }
 
@@ -146,9 +150,15 @@ TyPrim: Type = {
 
 // Expression grammar
 
+
+/// non-associative == which binds more loosely than arithmetic expressions
+ComparisonExpression: UntypedExprKind = {
+ <Sp<ArithmeticOrLogicalExpression>> "==" <Sp<ArithmeticOrLogicalExpression>> => UntypedExprKind::Equal(<>),
+}
+
 /// A single operator expression yields a value and may recurse
-ArithmeticOrLogicalExpression : UntypedExprKind = {
-    Sp<ExpressionWithoutBlock> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
+ArithmeticOrLogicalExpression: UntypedExprKind = {
+    Sp<ArithmeticOrLogicalExpression> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
     Factor,
 };
 
@@ -158,9 +168,9 @@ ExprOp: Opcode = {
 };
 
 Factor: UntypedExprKind = {
-    Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::Op(<>),
     UnaryTerm,
-    ! => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
+    Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::Op(<>),
+//    ! => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
 FactorOp: Opcode = {
@@ -175,11 +185,16 @@ UnaryTerm: UntypedExprKind = {
 
 Term: UntypedExprKind = {
     Number => UntypedExprKind::Number(<>.to_string()),
-    ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
+    Identifier,
+    CallExpression,
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
     "(" <Expression> ")",
 };
+
+Identifier: UntypedExprKind = {
+    ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
+}
 
 IfExpr: UntypedExprKind = {
     "if" <c:Sp<ExpressionWithoutBlock>> <t:Sp<Block>> "else" <f:Sp<Block>> => UntypedExprKind::If(c, t, f),

@@ -34,6 +34,12 @@ pub enum Token<'input> {
     Divide,
     #[token("=")]
     Eq,
+    #[token("==")]
+    BoolEq,
+    #[token("<")]
+    Lt,
+    #[token(">")]
+    Gt,
     #[token("let")]
     Let,
     #[token("if")]
@@ -93,6 +99,9 @@ impl<'i> Display for Token<'i> {
             Token::Minus => "-",
             Token::Multiply => "*",
             Token::Divide => "/",
+            Token::BoolEq => "==",
+            Token::Lt => "<",
+            Token::Gt => ">",
             Token::Eq => "=",
             Token::Let => "let",
             Token::If => "if",

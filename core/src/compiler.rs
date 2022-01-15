@@ -62,7 +62,7 @@ impl Type {
                 }
                 out
             }
-            Type::Unknown => unreachable!(),
+            Type::Unknown => unreachable!("attempted to get wasm type for unknown type"),
         }
     }
 }
@@ -183,7 +183,7 @@ impl<'a> Compiler {
                     if &func.name == "main" {
                         main_func = Some(func);
                     }
-                    function_definitions.push(self.function_def(func))
+                    function_definitions.push(self.function_def(func, &expr.ty))
                 }
                 _ => {
                     panic!("only functions can exist at the top level")
@@ -237,13 +237,17 @@ impl<'a> Compiler {
         })
     }
 
-    fn function_def(&self, func: &FuncExpr<TypedSpExpr>) -> String {
+    fn function_def(&self, func: &FuncExpr<TypedSpExpr>, func_ty: &Type) -> String {
         let mut instructions: Vec<String> = vec![];
         let mut identifiers = vec![];
 
         // declare locals
         func.body.local_identifiers(&mut identifiers);
         for (id, ty) in identifiers.iter().enumerate() {
+            // unknown types represent gaps in the local index space
+            if ty == &Type::Unknown {
+                continue;
+            }
             let type_descriptor = match ty {
                 // the funcref type is i32. Maybe we need Type::FuncRef?
                 Type::Function { .. } => "i32".to_string(),
@@ -257,12 +261,12 @@ impl<'a> Compiler {
         trace!("instructions:\n{:?}", instructions);
         format!(
             r#"
-  (func ${} (result {})
+  (func ${} {}
     {}
   ){}
 "#,
             func.id,
-            func.body.ty.wasm_type(),
+            func_ty.wasm_type(),
             instructions.join("\n    "),
             // export public functions
             if let ID::PubFuncId(name) = &func.id {
@@ -298,7 +302,7 @@ impl<'a> Compiler {
             ExprKind::Identifier(id) => match id {
                 ID::Name(_) => unreachable!(),
                 ID::PubFuncId(_) => push!("i32.const ${}", id.name()),
-                ID::VarId(_) => push!("local.get ${}", id.id()),
+                ID::VarId(_) => push!("local.get {}", id.id()),
                 ID::FuncId(_) => push!("i32.const {}", id.id()),
             },
             ExprKind::Negate(b) => match b.as_ref() {
@@ -312,6 +316,17 @@ impl<'a> Compiler {
                     push!("i64.mul");
                 }
             },
+            ExprKind::Equal(l, r) => {
+                self.codegen(l, instructions);
+                self.codegen(r, instructions);
+                match l.ty {
+                    Type::Int64 => push!("i64.eq"),
+                    Type::Bool => push!("i32.eq"),
+                    Type::Void => push!("i32.const 0"),
+                    Type::Function { .. } => push!("i32.eq"),
+                    Type::Unknown => panic!("unknown type during codegen"),
+                }
+            }
             ExprKind::Call(op, params) => {
                 for param in params {
                     self.codegen(param, instructions);
@@ -326,7 +341,10 @@ impl<'a> Compiler {
                     push!("call_indirect {}", op.ty.wasm_type())
                 }
             }
-            ExprKind::Function(_) => {}
+            ExprKind::Function(_) => {
+                // Inner functions need to be lifted. They shouldn't be nested in the AST.
+                panic!("function found inside another function")
+            }
             ExprKind::Op(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);
@@ -365,7 +383,7 @@ impl<'a> Compiler {
                 if let Some(e) = e {
                     self.codegen(e, instructions);
                 }
-                push!("local.set ${}", id.id());
+                push!("local.set {}", id.id());
             }
         }
     }

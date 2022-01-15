@@ -217,6 +217,18 @@ mod tests {
     }
 
     #[test]
+    fn comparison_operations() {
+        returns! {
+            "1000 == 1000" => ReturnValue::Bool(true)
+            "0 == 1" => ReturnValue::Bool(false)
+            "-0 == 0" => ReturnValue::Bool(true)
+            "1 + 4 == 2 + 3" => ReturnValue::Bool(true)
+            "(2 * 3 == 0) == false" => ReturnValue::Bool(true)
+            "let foo = 1; 1 == foo" => ReturnValue::Bool(true)
+        }
+    }
+
+    #[test]
     fn if_condition() {
         returns! {
             "if true {false} else {true}" => ReturnValue::Bool(false)
@@ -224,6 +236,7 @@ mod tests {
             "if false{1} else { 2 }" => ReturnValue::Integer(2)
             "if false{ 1 } else {{2}}" => ReturnValue::Integer(2)
             "if true {1;true; 1+2} else {0;0}" => ReturnValue::Integer(3)
+            "if 1 == 2 { false } else { true }" => ReturnValue::Bool(true)
         }
     }
 

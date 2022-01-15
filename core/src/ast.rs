@@ -63,6 +63,7 @@ pub enum ExprKind<T> {
     Number(String),
     Bool(bool),
     Negate(T),
+    Equal(T, T),
     Op(T, Opcode, T),
     Call(T, Vec<T>),
     Block(Vec<T>),
@@ -240,6 +241,14 @@ impl UntypedSpExpr {
                     e = type_error_correction(Type::Int64, e);
                 }
                 Expr::new(ExprKind::Negate(e), Type::Int64)
+            }
+            ExprKind::Equal(l, r) => {
+                let l = l.into_typed(lexical_env);
+                let mut r = r.into_typed(lexical_env);
+                if l.ty != r.ty {
+                    r = type_error_correction(l.ty.clone(), r);
+                }
+                Expr::new(ExprKind::Equal(l, r), Type::Bool)
             }
             ExprKind::Op(e1, op, e2) => {
                 let mut e1 = e1.into_typed(lexical_env);
@@ -506,6 +515,9 @@ impl TypedSpExpr {
                 Box::new(std::iter::empty())
             }
             TypedExprKind::Negate(e) => e.errors(roots_only),
+            TypedExprKind::Equal(l, r) => {
+                Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
+            }
             TypedExprKind::Op(l, _, r) => {
                 Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
             }
@@ -535,20 +547,7 @@ impl TypedSpExpr {
 
     /// Find locally bound identifiers and place their Type in a vector indexed by their ID number
     pub fn local_identifiers(&self, local: &mut Vec<Type>) {
-        let ty = &self.ty;
         match &self.kind {
-            TypedExprKind::Identifier(id) => match id {
-                ID::VarId(id) => {
-                    if local.len() <= *id {
-                        local.resize(id + 1, Type::Unknown);
-                    }
-                    local[*id] = ty.clone();
-                }
-                ID::FuncId(_) | ID::PubFuncId(_) => {}
-                ID::Name(_) => {
-                    panic!("local_identifiers called on an untransformed tree")
-                }
-            },
             TypedExprKind::Negate(e) => e.local_identifiers(local),
             TypedExprKind::Op(l, _, r) => {
                 l.local_identifiers(local);
@@ -564,24 +563,45 @@ impl TypedSpExpr {
                 t.local_identifiers(local);
                 f.local_identifiers(local)
             }
-            TypedExprKind::Let(id, _, Some(e)) => {
-                // for `let id = expr`, the id is accessed while binding.
-                // Dead store elimination would obviate this need.
+            TypedExprKind::Let(id, ty, e) => {
+                if let Some(expr) = e {
+                    expr.local_identifiers(local);
+                }
+                let ty = match ty {
+                    None => match e {
+                        None => panic!("undetermined type of local variable"),
+                        Some(e) => &e.ty,
+                    },
+                    Some(t) => t,
+                };
                 match id {
                     ID::VarId(id) | ID::FuncId(id) => {
                         if local.len() <= *id {
                             local.resize(id + 1, Type::Unknown);
                         }
-                        local[*id] = e.ty.clone();
+                        local[*id] = ty.clone();
                     }
                     ID::PubFuncId(_) => {}
                     ID::Name(_) => {
                         panic!("local_identifiers called on an untransformed tree")
                     }
                 }
-                e.local_identifiers(local);
             }
-            _ => {}
+            TypedExprKind::Equal(l, r) => {
+                l.local_identifiers(local);
+                r.local_identifiers(local);
+            }
+            TypedExprKind::Call(op, args) => {
+                op.local_identifiers(local);
+                for arg in args {
+                    arg.local_identifiers(local);
+                }
+            }
+            TypedExprKind::Identifier(_) => {}
+            TypedExprKind::Number(_) => {}
+            TypedExprKind::Bool(_) => {}
+            TypedExprKind::Function(_) => {}
+            TypedExprKind::Error(_) => {}
         }
     }
 }
@@ -660,7 +680,15 @@ pub fn parse_expr_as_top_level(str_expr: &str) -> Result<Module, Vec<Span<AstErr
             returns: ty.clone(),
             body: ast,
         });
-        let wrapper = TypedSpExpr::new(range.start, range.end, wrapper, ty);
+        let wrapper = TypedSpExpr::new(
+            range.start,
+            range.end,
+            wrapper,
+            Type::Function {
+                params: vec![],
+                returns: Box::new(ty),
+            },
+        );
         Module {
             functions: vec![wrapper],
             module_env,
@@ -853,7 +881,7 @@ mod tests {
         ($e:expr) => {
             Span {
                 start: 0,
-                end: 1,
+                end: 0,
                 item: Box::new(UntypedExpr { kind: $e }),
             }
         };
@@ -930,6 +958,19 @@ mod tests {
         parse_ok!("-(1+2)");
         parse_ok!("-(-(-1))");
         parse_ok!("3--2");
+    }
+
+    #[test]
+    fn comparison_operations() {
+        let one = || expr!(ExprKind::Number("1".to_string()));
+        let two = || expr!(ExprKind::Number("2".to_string()));
+        parses! {
+            "1 == 2" => ExprKind::Equal(one(), two())
+            "1 + 2 == 2 + 1" => ExprKind::Equal(expr!(ExprKind::Op(one(), Opcode::Add, two())), expr!(ExprKind::Op(two(), Opcode::Add, one())))
+            "-1 == -2" => ExprKind::Equal(expr!(ExprKind::Negate(one())), expr!(ExprKind::Negate(two())))
+        };
+        // not associative
+        parse_fails!("1 == 2 == 3");
     }
 
     #[test]
