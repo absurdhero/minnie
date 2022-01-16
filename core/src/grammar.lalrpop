@@ -112,6 +112,7 @@ ArithmeticOrLogicalExpression,
 ExpressionStatement: UntypedExprKind = {
     <ExpressionWithoutBlock> ";",
     <ExpressionWithBlock> ";"?,
+    <!> ";" => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 }
 
 LetStatement: UntypedExprKind = {
@@ -120,6 +121,7 @@ LetStatement: UntypedExprKind = {
 
 Block: UntypedExprKind = {
   "{" <MaybeStatements> "}" => UntypedExprKind::Block(<>),
+  "{" <!> "}" => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
 CallExpression: UntypedExprKind = {
@@ -182,7 +184,6 @@ ExprOp: ArithOp = {
 Factor: UntypedExprKind = {
     UnaryTerm,
     Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::ArithOp(<>),
-//    ! => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
 FactorOp: ArithOp = {
@@ -202,9 +203,11 @@ Term: UntypedExprKind = {
     "true" => UntypedExprKind::Bool(true),
     "false" => UntypedExprKind::Bool(false),
     "(" <Expression> ")",
+    "(" <!> ")" => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
-Identifier: UntypedExprKind = {
+Identifier:
+UntypedExprKind = {
     ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
 }
 
