@@ -63,8 +63,8 @@ pub enum ExprKind<T> {
     Number(String),
     Bool(bool),
     Negate(T),
-    Equal(T, T),
-    Op(T, Opcode, T),
+    CompareOp(T, CompareOp, T),
+    ArithOp(T, ArithOp, T),
     Call(T, Vec<T>),
     Block(Vec<T>),
     // fields: name, params, return type, body
@@ -84,11 +84,21 @@ impl<T> ExprKind<T> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Opcode {
+pub enum ArithOp {
     Mul,
     Div,
     Add,
     Sub,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CompareOp {
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -242,24 +252,27 @@ impl UntypedSpExpr {
                 }
                 Expr::new(ExprKind::Negate(e), Type::Int64)
             }
-            ExprKind::Equal(l, r) => {
-                let l = l.into_typed(lexical_env);
+            ExprKind::CompareOp(l, op, r) => {
+                let mut l = l.into_typed(lexical_env);
                 let mut r = r.into_typed(lexical_env);
-                if l.ty != r.ty {
-                    r = type_error_correction(l.ty.clone(), r);
+                if l.ty != Type::Bool {
+                    l = type_error_correction(Type::Bool, l);
                 }
-                Expr::new(ExprKind::Equal(l, r), Type::Bool)
+                if r.ty != Type::Bool {
+                    r = type_error_correction(Type::Bool, r);
+                }
+                Expr::new(ExprKind::CompareOp(l, op, r), Type::Bool)
             }
-            ExprKind::Op(e1, op, e2) => {
-                let mut e1 = e1.into_typed(lexical_env);
-                let mut e2 = e2.into_typed(lexical_env);
-                if e1.ty != Type::Int64 {
-                    e1 = type_error_correction(Type::Int64, e1);
+            ExprKind::ArithOp(l, op, r) => {
+                let mut l = l.into_typed(lexical_env);
+                let mut r = r.into_typed(lexical_env);
+                if l.ty != Type::Int64 {
+                    l = type_error_correction(Type::Int64, l);
                 }
-                if e2.ty != Type::Int64 {
-                    e2 = type_error_correction(Type::Int64, e2);
+                if r.ty != Type::Int64 {
+                    r = type_error_correction(Type::Int64, r);
                 }
-                Expr::new(ExprKind::Op(e1, op, e2), Type::Int64)
+                Expr::new(ExprKind::ArithOp(l, op, r), Type::Int64)
             }
             ExprKind::Call(op, params) => {
                 let typed_op = op.into_typed(lexical_env);
@@ -515,10 +528,7 @@ impl TypedSpExpr {
                 Box::new(std::iter::empty())
             }
             TypedExprKind::Negate(e) => e.errors(roots_only),
-            TypedExprKind::Equal(l, r) => {
-                Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
-            }
-            TypedExprKind::Op(l, _, r) => {
+            TypedExprKind::CompareOp(l, _, r) | TypedExprKind::ArithOp(l, _, r) => {
                 Box::new(l.errors(roots_only).chain(r.errors(roots_only)))
             }
             TypedExprKind::Call(op, params) => Box::new(op.errors(roots_only).chain(
@@ -549,7 +559,7 @@ impl TypedSpExpr {
     pub fn local_identifiers(&self, local: &mut Vec<Type>) {
         match &self.kind {
             TypedExprKind::Negate(e) => e.local_identifiers(local),
-            TypedExprKind::Op(l, _, r) => {
+            TypedExprKind::ArithOp(l, _, r) | TypedExprKind::CompareOp(l, _, r) => {
                 l.local_identifiers(local);
                 r.local_identifiers(local)
             }
@@ -586,10 +596,6 @@ impl TypedSpExpr {
                         panic!("local_identifiers called on an untransformed tree")
                     }
                 }
-            }
-            TypedExprKind::Equal(l, r) => {
-                l.local_identifiers(local);
-                r.local_identifiers(local);
             }
             TypedExprKind::Call(op, args) => {
                 op.local_identifiers(local);
@@ -965,9 +971,9 @@ mod tests {
         let one = || expr!(ExprKind::Number("1".to_string()));
         let two = || expr!(ExprKind::Number("2".to_string()));
         parses! {
-            "1 == 2" => ExprKind::Equal(one(), two())
-            "1 + 2 == 2 + 1" => ExprKind::Equal(expr!(ExprKind::Op(one(), Opcode::Add, two())), expr!(ExprKind::Op(two(), Opcode::Add, one())))
-            "-1 == -2" => ExprKind::Equal(expr!(ExprKind::Negate(one())), expr!(ExprKind::Negate(two())))
+            "1 == 2" => ExprKind::CompareOp(one(), CompareOp::Eq, two())
+            "1 + 2 == 2 + 1" => ExprKind::CompareOp(expr!(ExprKind::ArithOp(one(), ArithOp::Add, two())), CompareOp::Eq, expr!(ExprKind::ArithOp(two(), ArithOp::Add, one())))
+            "-1 == -2" => ExprKind::CompareOp(expr!(ExprKind::Negate(one())), CompareOp::Eq, expr!(ExprKind::Negate(two())))
         };
         // not associative
         parse_fails!("1 == 2 == 3");

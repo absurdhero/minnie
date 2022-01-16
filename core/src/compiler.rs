@@ -6,7 +6,8 @@ use thiserror::Error;
 use crate::ast;
 use crate::ast::ExprKind::Identifier;
 use crate::ast::{
-    ErrorNode, ErrorNodeKind, Expr, ExprKind, FuncExpr, Opcode, TypedExprKind, TypedSpExpr,
+    ArithOp, CompareOp, ErrorNode, ErrorNodeKind, Expr, ExprKind, FuncExpr, TypedExprKind,
+    TypedSpExpr,
 };
 use crate::span::Span;
 use crate::types::{Type, ID};
@@ -316,14 +317,22 @@ impl<'a> Compiler {
                     push!("i64.mul");
                 }
             },
-            ExprKind::Equal(l, r) => {
+            ExprKind::CompareOp(l, op, r) => {
                 self.codegen(l, instructions);
                 self.codegen(r, instructions);
+                let op_suffix = match op {
+                    CompareOp::Eq => "eq",
+                    CompareOp::Neq => "ne",
+                    CompareOp::Lt => "lt_s",
+                    CompareOp::Gt => "gt_s",
+                    CompareOp::LtEq => "le_s",
+                    CompareOp::GtEq => "ge_s",
+                };
                 match l.ty {
-                    Type::Int64 => push!("i64.eq"),
-                    Type::Bool => push!("i32.eq"),
+                    Type::Int64 => push!("i64.{}", op_suffix),
+                    Type::Bool => push!("i32.{}", op_suffix),
                     Type::Void => push!("i32.const 0"),
-                    Type::Function { .. } => push!("i32.eq"),
+                    Type::Function { .. } => push!("i32.{}", op_suffix),
                     Type::Unknown => panic!("unknown type during codegen"),
                 }
             }
@@ -345,14 +354,14 @@ impl<'a> Compiler {
                 // Inner functions need to be lifted. They shouldn't be nested in the AST.
                 panic!("function found inside another function")
             }
-            ExprKind::Op(e1, op, e2) => {
+            ExprKind::ArithOp(e1, op, e2) => {
                 self.codegen(e1, instructions);
                 self.codegen(e2, instructions);
                 match op {
-                    Opcode::Mul => push!("i64.mul"),
-                    Opcode::Div => push!("i64.div_s"),
-                    Opcode::Add => push!("i64.add"),
-                    Opcode::Sub => push!("i64.sub"),
+                    ArithOp::Mul => push!("i64.mul"),
+                    ArithOp::Div => push!("i64.div_s"),
+                    ArithOp::Add => push!("i64.add"),
+                    ArithOp::Sub => push!("i64.sub"),
                 };
             }
             ExprKind::Block(v) => {

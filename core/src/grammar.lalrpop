@@ -1,4 +1,4 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, Opcode};
+use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, ArithOp, CompareOp};
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
@@ -18,8 +18,11 @@ extern {
         "/" => Token::Divide,
         "=" => Token::Eq,
         "==" => Token::BoolEq,
+        "!=" => Token::BoolNotEq,
         "<" => Token::Lt,
         ">" => Token::Gt,
+        "<=" => Token::LtEq,
+        ">=" => Token::GtEq,
         ";" => Token::Semi,
         "," => Token::Comma,
         "{" => Token::CurlyStart,
@@ -151,31 +154,40 @@ TyPrim: Type = {
 // Expression grammar
 
 
-/// non-associative == which binds more loosely than arithmetic expressions
+/// these are non-associative and binds more loosely than arithmetic expressions
 ComparisonExpression: UntypedExprKind = {
- <Sp<ArithmeticOrLogicalExpression>> "==" <Sp<ArithmeticOrLogicalExpression>> => UntypedExprKind::Equal(<>),
+ Sp<ArithmeticOrLogicalExpression> CompareOpExp Sp<ArithmeticOrLogicalExpression> => UntypedExprKind::CompareOp(<>),
 }
+
+CompareOpExp: CompareOp = {
+        "==" => CompareOp::Eq,
+        "!=" => CompareOp::Neq,
+        "<" => CompareOp::Lt,
+        ">" => CompareOp::Gt,
+        "<=" => CompareOp::LtEq,
+        ">=" => CompareOp::GtEq,
+};
 
 /// A single operator expression yields a value and may recurse
 ArithmeticOrLogicalExpression: UntypedExprKind = {
-    Sp<ArithmeticOrLogicalExpression> ExprOp Sp<Factor> => UntypedExprKind::Op(<>),
+    Sp<ArithmeticOrLogicalExpression> ExprOp Sp<Factor> => UntypedExprKind::ArithOp(<>),
     Factor,
 };
 
-ExprOp: Opcode = {
-    "+" => Opcode::Add,
-    "-" => Opcode::Sub,
+ExprOp: ArithOp = {
+    "+" => ArithOp::Add,
+    "-" => ArithOp::Sub,
 };
 
 Factor: UntypedExprKind = {
     UnaryTerm,
-    Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::Op(<>),
+    Sp<Factor> FactorOp Sp<UnaryTerm> => UntypedExprKind::ArithOp(<>),
 //    ! => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
-FactorOp: Opcode = {
-    "*" => Opcode::Mul,
-    "/" => Opcode::Div,
+FactorOp: ArithOp = {
+    "*" => ArithOp::Mul,
+    "/" => ArithOp::Div,
 };
 
 UnaryTerm: UntypedExprKind = {
