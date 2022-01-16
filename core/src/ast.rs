@@ -246,32 +246,17 @@ impl UntypedSpExpr {
             ExprKind::Number(s) => Expr::new(TypedExprKind::Number(s), Type::Int64),
             ExprKind::Bool(b) => Expr::new(TypedExprKind::Bool(b), Type::Bool),
             ExprKind::Negate(e) => {
-                let mut e = e.into_typed(lexical_env);
-                if e.ty != Type::Int64 {
-                    e = type_error_correction(Type::Int64, e);
-                }
+                let e = e.assert_type(lexical_env, Type::Int64);
                 Expr::new(ExprKind::Negate(e), Type::Int64)
             }
             ExprKind::CompareOp(l, op, r) => {
-                let mut l = l.into_typed(lexical_env);
-                let mut r = r.into_typed(lexical_env);
-                if l.ty != Type::Bool {
-                    l = type_error_correction(Type::Bool, l);
-                }
-                if r.ty != Type::Bool {
-                    r = type_error_correction(Type::Bool, r);
-                }
+                let l = l.into_typed(lexical_env);
+                let r = r.assert_type(lexical_env, l.ty.clone());
                 Expr::new(ExprKind::CompareOp(l, op, r), Type::Bool)
             }
             ExprKind::ArithOp(l, op, r) => {
-                let mut l = l.into_typed(lexical_env);
-                let mut r = r.into_typed(lexical_env);
-                if l.ty != Type::Int64 {
-                    l = type_error_correction(Type::Int64, l);
-                }
-                if r.ty != Type::Int64 {
-                    r = type_error_correction(Type::Int64, r);
-                }
+                let l = l.assert_type(lexical_env, Type::Int64);
+                let r = r.assert_type(lexical_env, Type::Int64);
                 Expr::new(ExprKind::ArithOp(l, op, r), Type::Int64)
             }
             ExprKind::Call(op, params) => {
@@ -313,13 +298,10 @@ impl UntypedSpExpr {
                 }
             }
             ExprKind::If(c, t, f) => {
-                let mut c = c.into_typed(lexical_env);
+                let c = c.assert_type(lexical_env, Type::Bool);
                 let t = t.into_typed(lexical_env);
                 let mut f = f.into_typed(lexical_env);
                 let return_ty = t.ty.clone();
-                if c.ty != Type::Bool {
-                    c = type_error_correction(Type::Bool, c)
-                }
                 if f.ty != return_ty {
                     f = type_error_correction(return_ty.clone(), f);
                     return type_error_annotation(
@@ -437,6 +419,19 @@ impl UntypedSpExpr {
             }
         };
         (self.start, Box::new(typed_kind), self.end).into()
+    }
+
+    /// converts an untyped expr into a typed one and checks that it is the expected type.
+    ///
+    /// If the type doesn't match, it wraps the expr in an ErrorNode
+    /// and sets it to the desired type so parsing may continue.
+    fn assert_type(self, lexical_env: &mut LexicalEnv, expected: Type) -> TypedSpExpr {
+        let typed = self.into_typed(lexical_env);
+        if typed.ty != expected {
+            type_error_correction(expected, typed)
+        } else {
+            typed
+        }
     }
 }
 
