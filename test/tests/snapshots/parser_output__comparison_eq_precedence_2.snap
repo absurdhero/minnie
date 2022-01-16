@@ -1,0 +1,38 @@
+---
+source: test/tests/parser_output.rs
+assertion_line: 21
+expression: "parse_expr(\"-1 == - 2\").map(|b| b.ast.item)"
+
+---
+Ok(Expr(
+  kind: CompareOp(Span(
+    start: 0,
+    end: 2,
+    item: Expr(
+      kind: Negate(Span(
+        start: 1,
+        end: 2,
+        item: Expr(
+          kind: Number("1"),
+          ty: Int64,
+        ),
+      )),
+      ty: Int64,
+    ),
+  ), Eq, Span(
+    start: 6,
+    end: 9,
+    item: Expr(
+      kind: Negate(Span(
+        start: 8,
+        end: 9,
+        item: Expr(
+          kind: Number("2"),
+          ty: Int64,
+        ),
+      )),
+      ty: Int64,
+    ),
+  )),
+  ty: Bool,
+))

@@ -1,0 +1,52 @@
+---
+source: test/tests/parser_output.rs
+assertion_line: 17
+expression: "parse_expr(\"1 + 2 == 2 + 1\").map(|b| b.ast.item)"
+
+---
+Ok(Expr(
+  kind: CompareOp(Span(
+    start: 0,
+    end: 5,
+    item: Expr(
+      kind: ArithOp(Span(
+        start: 0,
+        end: 1,
+        item: Expr(
+          kind: Number("1"),
+          ty: Int64,
+        ),
+      ), Add, Span(
+        start: 4,
+        end: 5,
+        item: Expr(
+          kind: Number("2"),
+          ty: Int64,
+        ),
+      )),
+      ty: Int64,
+    ),
+  ), Eq, Span(
+    start: 9,
+    end: 14,
+    item: Expr(
+      kind: ArithOp(Span(
+        start: 9,
+        end: 10,
+        item: Expr(
+          kind: Number("2"),
+          ty: Int64,
+        ),
+      ), Add, Span(
+        start: 13,
+        end: 14,
+        item: Expr(
+          kind: Number("1"),
+          ty: Int64,
+        ),
+      )),
+      ty: Int64,
+    ),
+  )),
+  ty: Bool,
+))

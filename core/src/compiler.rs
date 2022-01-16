@@ -3,6 +3,9 @@ use std::ops::Range;
 
 use thiserror::Error;
 
+#[cfg(feature = "serialize_ast")]
+use serde::Serialize;
+
 use crate::ast;
 use crate::ast::ExprKind::Identifier;
 use crate::ast::{
@@ -17,6 +20,7 @@ use crate::types::{Type, ID};
 
 /// Compiler Errors
 #[derive(Error, Debug)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ErrorType {
     #[error("parse error: {0}")]
     ParseError(ast::AstError),
@@ -27,6 +31,7 @@ pub enum ErrorType {
 
 /// Errors caused by a fault in the program being compiled
 #[derive(Error, Debug)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 #[error("{error}")]
 pub struct CompilerError {
     pub error: ErrorType,
@@ -35,6 +40,7 @@ pub struct CompilerError {
 
 /// An executable unit of code
 #[derive(Debug)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct ModuleSource {
     /// name of the module. Usually derived from the file name.
     pub name: String,
@@ -365,14 +371,16 @@ impl<'a> Compiler {
                 };
             }
             ExprKind::Block(v) => {
-                // execute and throw out the result of every expr but the last
-                for e in &v[0..(v.len() - 1)] {
-                    self.codegen(e, instructions);
-                    if e.kind.is_expression() && e.ty != Type::Void {
-                        push!("drop")
+                if !v.is_empty() {
+                    // execute and throw out the result of every expr but the last
+                    for e in &v[0..(v.len() - 1)] {
+                        self.codegen(e, instructions);
+                        if e.kind.is_expression() && e.ty != Type::Void {
+                            push!("drop")
+                        }
                     }
+                    self.codegen(&v[v.len() - 1], instructions);
                 }
-                self.codegen(&v[v.len() - 1], instructions);
             }
             ExprKind::If(cond, t, f) => {
                 self.codegen(cond, instructions);

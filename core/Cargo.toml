@@ -15,3 +15,8 @@ anyhow = "1.0"
 thiserror = "1.0"
 wasmtime = "0.32"
 wasmtime-wasi = "0.32"
+serde = { version = "1.0", features=["derive"], optional = true }
+
+[features]
+# Enables serialization of AST objects
+serialize_ast = ["serde"]

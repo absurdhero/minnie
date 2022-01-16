@@ -1,0 +1,11 @@
+[package]
+name = "tests"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doc = false
+
+[dependencies]
+minnie = { path = "../core", features = ["serialize_ast"]}
+insta = { version = "1.10.0", features = ["glob", "ron"]}

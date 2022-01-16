@@ -1,0 +1,23 @@
+---
+source: test/tests/compiler_output.rs
+assertion_line: 22
+expression: "pub fn main() {\n}\n"
+input_file: test/tests/samples/main_empty.min
+
+---
+
+(module
+  ;; imports
+  (import "base" "print_num" (func $0  (param i64)))
+  (import "base" "itoa" (func $1  (param i64) (result i64)))
+  ;; funcref table
+  (table 3 funcref)
+  (elem (i32.const 0) $0 $1 $main)
+  ;; function declarations
+  
+  (func $main 
+    
+  )(export "main" (func $main))
+
+)
+

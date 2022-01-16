@@ -1,7 +1,11 @@
 use std::fmt::{Display, Formatter};
 
+#[cfg(feature = "serialize_ast")]
+use serde::Serialize;
+
 /// Types supported by the language
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum Type {
     // Primitive Types
     Int64,
@@ -24,6 +28,7 @@ pub enum Type {
 /// But during type analysis, identifiers are transformed into numeric IDs
 /// with separate ID spaces for variables and functions.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ID {
     Name(String),
     VarId(usize),

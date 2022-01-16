@@ -4,6 +4,9 @@ use logos::Logos;
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
+#[cfg(feature = "serialize_ast")]
+use serde::Serialize;
+
 ///! A custom lexer using the Logos library
 ///!
 ///! Inspired by the LALRPOP Logos integration example
@@ -140,6 +143,7 @@ impl<'i> Display for Token<'i> {
 }
 
 #[derive(Clone, Error, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum LexError {
     #[error("invalid token")]
     InvalidToken,

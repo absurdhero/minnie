@@ -1,0 +1,4 @@
+fn is_negative(i: int) -> bool {
+    let result = i < 0;
+    result
+}

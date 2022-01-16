@@ -1,0 +1,28 @@
+---
+source: test/tests/compiler_output.rs
+assertion_line: 27
+expression: "fn is_negative(i: int) -> bool {\n    let result = i < 0;\n    result\n}\n"
+input_file: test/tests/samples/function_simple.min
+
+---
+
+(module
+  ;; imports
+  (import "base" "print_num" (func $0  (param i64)))
+  (import "base" "itoa" (func $1  (param i64) (result i64)))
+  ;; funcref table
+  (table 3 funcref)
+  (elem (i32.const 0) $0 $1 $2)
+  ;; function declarations
+  
+  (func $2  (param i64) (result i32)
+    (local $1 i32)
+    local.get 0
+    i64.const 0
+    i64.lt_s
+    local.set 1
+    local.get 1
+  )
+
+)
+

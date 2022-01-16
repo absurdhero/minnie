@@ -1,0 +1,37 @@
+---
+source: test/tests/parser_output.rs
+assertion_line: 25
+expression: "parse_expr(\"5 == false\").map(|b| b.ast.item)"
+
+---
+Ok(Expr(
+  kind: CompareOp(Span(
+    start: 0,
+    end: 1,
+    item: Expr(
+      kind: Number("5"),
+      ty: Int64,
+    ),
+  ), Eq, Span(
+    start: 5,
+    end: 10,
+    item: Expr(
+      kind: Error(ErrorNode(
+        kind: TypeMismatch(
+          expected: Int64,
+          found: Bool,
+        ),
+        expr: Some(Span(
+          start: 5,
+          end: 10,
+          item: Expr(
+            kind: Bool(false),
+            ty: Bool,
+          ),
+        )),
+      )),
+      ty: Int64,
+    ),
+  )),
+  ty: Bool,
+))

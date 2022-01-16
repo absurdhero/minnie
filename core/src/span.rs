@@ -2,10 +2,14 @@ use core::fmt;
 use std::fmt::Formatter;
 use std::ops::{Deref, Range};
 
+#[cfg(feature = "serialize_ast")]
+use serde::Serialize;
+
 ///! Attach start and end locations to some data.
 ///! Provides conversions from tuples and ranges.
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct Span<T> {
     pub start: usize,
     pub end: usize,

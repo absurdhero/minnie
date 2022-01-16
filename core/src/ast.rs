@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
 
+#[cfg(feature = "serialize_ast")]
+use serde::Serialize;
+
 ///! This module is responsible for parsing source code into a validated AST
 ///! for consumption by the compiler module.
 
@@ -22,6 +25,7 @@ pub type UntypedExprKind = ExprKind<UntypedSpExpr>;
 
 // wrapper type to break cyclic type definition above
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct UntypedExpr {
     kind: UntypedExprKind,
 }
@@ -58,6 +62,7 @@ impl Eq for UntypedSpExpr {}
 
 /// ExprKind is used to build trees of untyped and typed expressions
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ExprKind<T> {
     Identifier(ID),
     Number(String),
@@ -84,6 +89,7 @@ impl<T> ExprKind<T> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ArithOp {
     Mul,
     Div,
@@ -92,6 +98,7 @@ pub enum ArithOp {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum CompareOp {
     Eq,
     Neq,
@@ -102,6 +109,7 @@ pub enum CompareOp {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct FuncExpr<T> {
     pub id: ID,
     pub name: String,
@@ -135,6 +143,7 @@ impl<T> FuncExpr<T> {
 /// transformation will replace the pattern with unnamed local variable ID and
 /// insert destructuring expressions into the AST at the beginning of the function's block.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct FormalParam {
     pub name: ID,
     pub ty: Type,
@@ -142,6 +151,7 @@ pub struct FormalParam {
 
 /// Typed Expression
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct Expr {
     pub kind: TypedExprKind,
     pub ty: Type,
@@ -165,6 +175,7 @@ impl From<(Type, TypedSpExpr)> for Expr {
 /// The Error type for anything that can go wrong during AST construction
 /// including lexing, parsing, and type errors.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum AstError {
     #[error("unrecognized EOF")]
     UnrecognizedEOF,
@@ -184,6 +195,7 @@ pub enum AstError {
 /// The first element is the type of error.
 /// The second element is the AST node that this error applies to.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct ErrorNode<T> {
     pub kind: ErrorNodeKind,
     pub expr: Option<T>,
@@ -191,6 +203,7 @@ pub struct ErrorNode<T> {
 pub type TypedErrorNode = ErrorNode<TypedSpExpr>;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ErrorNodeKind {
     #[error("expected {expected:?} but found {found:?}")]
     TypeMismatch { expected: Type, found: Type },
@@ -405,6 +418,11 @@ impl UntypedSpExpr {
                     lexical_env.update_func(&name, func_ty.clone());
                 }
 
+                // It would be better if we could point out the specific return expression
+                // that didn't match instead of highlighting the whole body as wrong.
+                // This would require passing the expected return type down into the block.
+                let typed_body = body.assert_type(&mut func_env, returns.clone());
+
                 // return the typed function
                 Expr::new(
                     ExprKind::Function(FuncExpr {
@@ -412,7 +430,7 @@ impl UntypedSpExpr {
                         id,
                         params: typed_params,
                         returns,
-                        body: body.into_typed(&mut func_env),
+                        body: typed_body,
                     }),
                     func_ty,
                 )
@@ -967,7 +985,6 @@ mod tests {
         let two = || expr!(ExprKind::Number("2".to_string()));
         parses! {
             "1 == 2" => ExprKind::CompareOp(one(), CompareOp::Eq, two())
-            "1 + 2 == 2 + 1" => ExprKind::CompareOp(expr!(ExprKind::ArithOp(one(), ArithOp::Add, two())), CompareOp::Eq, expr!(ExprKind::ArithOp(two(), ArithOp::Add, one())))
             "-1 == -2" => ExprKind::CompareOp(expr!(ExprKind::Negate(one())), CompareOp::Eq, expr!(ExprKind::Negate(two())))
         };
         // not associative
@@ -1063,15 +1080,5 @@ mod tests {
 
         parse_ok!("let foo:int = 1; foo");
         ast_error!("let foo:bool = 1; foo");
-    }
-
-    #[test]
-    fn call() {
-        parses! {
-            "print_num(1)" => ExprKind::Call(expr!(ExprKind::Identifier(ID::Name("print_num".to_string()))),
-                                             vec![expr!(ExprKind::Number("1".to_string()))])
-            "({print_num})(1);" => ExprKind::Call(block![expr!(ExprKind::Identifier(ID::Name("print_num".to_string())))],
-                                                vec![expr!(ExprKind::Number("1".to_string()))])
-        };
     }
 }

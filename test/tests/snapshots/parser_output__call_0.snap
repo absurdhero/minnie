@@ -1,0 +1,31 @@
+---
+source: test/tests/parser_output.rs
+assertion_line: 29
+expression: "parse_expr(\"print_num(1);\").map(|b| b.ast.item)"
+
+---
+Ok(Expr(
+  kind: Call(Span(
+    start: 0,
+    end: 9,
+    item: Expr(
+      kind: Identifier(FuncId(0)),
+      ty: Function(
+        params: [
+          Int64,
+        ],
+        returns: Void,
+      ),
+    ),
+  ), [
+    Span(
+      start: 10,
+      end: 11,
+      item: Expr(
+        kind: Number("1"),
+        ty: Int64,
+      ),
+    ),
+  ]),
+  ty: Void,
+))
