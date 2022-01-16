@@ -7,6 +7,7 @@ edition = "2021"
 lalrpop = "0.19.6"
 
 [dependencies]
+itertools = "0.10"
 log = "0.4"
 logos = "0.12"
 codespan-reporting = "0.11"
@@ -18,5 +19,5 @@ wasmtime-wasi = "0.32"
 serde = { version = "1.0", features=["derive"], optional = true }
 
 [features]
-# Enables serialization of AST objects
+# Enables serialization of AST objects -- used by the test module
 serialize_ast = ["serde"]

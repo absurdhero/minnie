@@ -3,6 +3,7 @@ use crate::module::ModuleEnv;
 use crate::span::Span;
 use crate::types::{Type, ID};
 use crate::{grammar, module};
+use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -208,7 +209,7 @@ pub enum ErrorNodeKind {
     #[error("expected {expected:?} but found {found:?}")]
     TypeMismatch { expected: Type, found: Type },
     #[error("{0}")]
-    TypeError(&'static str),
+    TypeError(String),
     #[error("unknown identifier `{0}`")]
     UnknownIdentifier(String),
     #[error(transparent)]
@@ -272,14 +273,9 @@ impl UntypedSpExpr {
                 let r = r.assert_type(lexical_env, Type::Int64);
                 Expr::new(ExprKind::ArithOp(l, op, r), Type::Int64)
             }
-            ExprKind::Call(op, params) => {
+            ExprKind::Call(op, args) => {
                 let typed_op = op.into_typed(lexical_env);
                 let oper_type = typed_op.ty.clone();
-                let typed_actuals: Vec<TypedSpExpr> = params
-                    .into_iter()
-                    .map(|e| e.into_typed(lexical_env))
-                    .collect();
-                let actual_types: Vec<Type> = typed_actuals.iter().map(|p| p.ty.clone()).collect();
 
                 // verify that func_type is a Function and that the arguments
                 // match the formal parameters.
@@ -288,24 +284,64 @@ impl UntypedSpExpr {
                         params: formal_params,
                         returns,
                     } => {
-                        // TODO: compare length and then zip so multiple errors can be omitted for mismatched params.
-                        if actual_types == formal_params {
-                            Expr::new(
-                                ExprKind::Call(typed_op, typed_actuals),
-                                returns.as_ref().clone(),
-                            )
+                        let actual_len = args.len();
+
+                        let verified_actuals = args
+                            .into_iter()
+                            .zip_longest(formal_params.clone())
+                            // ignore too few arguments. Make a single error for that below.
+                            .filter(|z| !z.is_right())
+                            .map(|z| {
+                                if z.is_both() {
+                                    let (actual, formal) = z.both().unwrap();
+                                    actual.assert_type(lexical_env, formal)
+                                } else {
+                                    // z.is_left() -- too many arguments
+                                    type_error_annotation(
+                                        z.left().unwrap().into_typed(lexical_env),
+                                        format!(
+                                            "this function takes {} arguments but {} were supplied",
+                                            formal_params.len(),
+                                            actual_len
+                                        ),
+                                    )
+                                }
+                            })
+                            .collect::<Vec<TypedSpExpr>>();
+                        // now handle the case where there weren't enough arguments
+                        if actual_len < formal_params.len() {
+                            return type_error_annotation(
+                                TypedSpExpr::new(
+                                    start,
+                                    end,
+                                    ExprKind::Call(typed_op, verified_actuals),
+                                    returns.as_ref().clone(),
+                                ),
+                                format!(
+                                    "this function takes {} arguments but {} were supplied",
+                                    formal_params.len(),
+                                    actual_len
+                                ),
+                            );
                         } else {
-                            // broken, see to-do above
-                            let typed_op = type_error_correction(Type::Unknown, typed_op);
                             Expr::new(
-                                ExprKind::Call(typed_op, typed_actuals),
+                                ExprKind::Call(typed_op, verified_actuals),
                                 returns.as_ref().clone(),
                             )
                         }
                     }
                     _ => {
-                        // if it isn't a function, return a corrected return type
-                        let typed_op = type_error_correction(Type::Unknown, typed_op);
+                        // if the operator isn't a function, return a corrected return type
+                        // and guess what kind of function was expected.
+                        let typed_actuals: Vec<TypedSpExpr> = args
+                            .into_iter()
+                            .map(|p| p.into_typed(lexical_env))
+                            .collect();
+                        let expected = Type::Function {
+                            params: typed_actuals.iter().map(|a| a.ty.clone()).collect(),
+                            returns: Box::new(Type::Unknown),
+                        };
+                        let typed_op = type_error_correction(expected, typed_op);
                         Expr::new(ExprKind::Call(typed_op, typed_actuals), Type::Unknown)
                     }
                 }
@@ -319,7 +355,8 @@ impl UntypedSpExpr {
                     f = type_error_correction(return_ty.clone(), f);
                     return type_error_annotation(
                         TypedSpExpr::new(start, end, ExprKind::If(c, t, f), return_ty),
-                        "the branches of this `if` condition have mismatched return types",
+                        "the branches of this `if` condition have mismatched return types"
+                            .to_string(),
                     );
                 }
                 Expr::new(ExprKind::If(c, t, f), return_ty)
@@ -381,7 +418,7 @@ impl UntypedSpExpr {
                             ExprKind::Let(id, Some(Type::Void), binding),
                             Type::Void,
                         ),
-                        "Not supported: untyped `let` with no binding.",
+                        "Not supported: untyped `let` with no binding.".to_string(),
                     );
                 }
             }
@@ -489,7 +526,7 @@ fn type_error_correction(expected: Type, found: TypedSpExpr) -> TypedSpExpr {
     )
 }
 
-fn type_error_annotation(expr: TypedSpExpr, msg: &'static str) -> TypedSpExpr {
+fn type_error_annotation(expr: TypedSpExpr, msg: String) -> TypedSpExpr {
     let ty = expr.ty.clone();
     let range = expr.range();
     type_error(

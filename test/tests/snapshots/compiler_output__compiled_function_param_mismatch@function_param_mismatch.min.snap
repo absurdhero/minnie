@@ -1,0 +1,53 @@
+---
+source: test/tests/compiler_output.rs
+assertion_line: 30
+expression: e
+input_file: test/tests/samples/function_param_mismatch.min
+
+---
+[
+  CompilerError(
+    error: ErrNode(TypeMismatch(
+      expected: Int64,
+      found: Bool,
+    ), []),
+    span: Some(Range(
+      start: 171,
+      end: 175,
+    )),
+  ),
+  CompilerError(
+    error: ErrNode(TypeMismatch(
+      expected: Bool,
+      found: Int64,
+    ), []),
+    span: Some(Range(
+      start: 177,
+      end: 178,
+    )),
+  ),
+  CompilerError(
+    error: ErrNode(TypeMismatch(
+      expected: Bool,
+      found: Int64,
+    ), []),
+    span: Some(Range(
+      start: 241,
+      end: 242,
+    )),
+  ),
+  CompilerError(
+    error: ErrNode(TypeError("this function takes 2 arguments but 3 were supplied"), []),
+    span: Some(Range(
+      start: 292,
+      end: 296,
+    )),
+  ),
+  CompilerError(
+    error: ErrNode(TypeError("this function takes 2 arguments but 1 were supplied"), []),
+    span: Some(Range(
+      start: 331,
+      end: 338,
+    )),
+  ),
+]

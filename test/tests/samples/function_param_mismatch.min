@@ -1,0 +1,18 @@
+fn foo(i: int, b: bool) -> int {
+    if b {
+        i
+    } else {
+        0
+    }
+}
+
+pub fn main() -> int {
+    // wrong argument order -- should emit two errors
+    foo(true, 2);
+    // just one argument wrong -- emit one error
+    foo(3, 0);
+    // // too many arguments
+    foo(1, false, true);
+    // // too few arguments
+    foo(1);
+}
