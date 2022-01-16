@@ -36,17 +36,18 @@ and [Haskell](https://github.com/ollef/Bidirectional).
 
 [A Unified Theory of Garbage Collection; Bacon](https://courses.cs.washington.edu/courses/cse590p/05au/p50-bacon.pdf)
 
-[Runtime Tags Aren't Necessary; Appel](https://www.cs.princeton.edu/~appel/papers/142.pdf)
-- A technique for implementing garbage collection in a statically typed language
-  without tagging data in memory.
-
 [Programming with Regions in ML Kit](https://elsman.com/mlkit/pdf/mlkit-4.3.0.pdf)
 - A very different approach to memory allocation using lifetime analysis
   and very little GC activity.
 
-[Rust as a language for high performance GC implementation](https://dl.acm.org/doi/10.1145/2926697.2926707)
+[Rust as a language for high performance GC implementation; Lin](https://dl.acm.org/doi/10.1145/2926697.2926707)
 
-[Does the Bronze Garbage Collector Make Rust Easier to use?](https://arxiv.org/pdf/2110.01098.pdf)
+[Does the Bronze Garbage Collector Make Rust Easier to use?; Coblenz](https://arxiv.org/pdf/2110.01098.pdf)
+
+Techniques for implementing garbage collection in a statically typed language without tagging data in memory.
+- [Runtime Tags Aren't Necessary; Appel](https://www.cs.princeton.edu/~appel/papers/142.pdf)
+- [Tag-Free Garbage Collection; Goldberg](https://cs.nyu.edu/~goldberg/pubs/gold91.pdf)
+- [Tag-free Garbage Collection Using Explicit Type Parameters; Tolmach](https://www.cs.tufts.edu/~nr/cs257/archive/andrew-tolmach/tag-free-gc-as-published.pdf)
 
 ## WebAssembly
 

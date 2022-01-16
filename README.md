@@ -1,7 +1,7 @@
 # Minnie
 
-Minnie is programming language designed for productive and safe software 
-development that uses advanced features to make programming less 
+Minnie is programming language designed for productive and safe software
+development that uses advanced features to make programming less
 frustrating and great for large, collaborative, code-bases.
 
 Goals:
@@ -34,7 +34,7 @@ pub fn main() {
 }
 ```
 
-This project requires a rust toolchain to build the software. If you don't 
+This project requires a rust toolchain to build the software. If you don't
 have rust, you can get it at [rustup.rs] or you can run the installer with:
 ```commandline
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
