@@ -180,13 +180,10 @@ impl From<(Type, TypedSpExpr)> for Expr {
 pub enum AstError {
     #[error("unrecognized EOF")]
     UnrecognizedEOF,
-    #[error("unexpected token `{0}`. Expected one of: {1:?}")]
+    #[error("unexpected token `{0}`. Expected one of: {}", .1.join(", "))]
     UnexpectedToken(String, Vec<String>),
     #[error(transparent)]
     LexError(#[from] LexError),
-    // // this variant stores an AST that contains one or more ExprKind::Error.
-    // #[error("AST contains errors")]
-    // InvalidAST(TypedSpExpr),
 }
 
 /// Records recoverable parse errors that still allow the AST
