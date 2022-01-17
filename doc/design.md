@@ -8,6 +8,14 @@ them together into a whole that delights us as programmers; Something more
 satisfying and productive than the most popular languages; Highly approachable,
 safe, and familiar yet powerful and state-of-the-art.
 
+First, a note about this document:
+
+> The following writings are my attempt at recording how I think about
+  the many aspects of programming languages. If you spot a problem,
+  have better ideas, or disagree, I'd love to hear about it. I recognize 
+  that many of the below thoughts are not fully developed and will evolve 
+  over time.
+
 Let's take a look at what makes a good programming language. Programmers make
 conscious decisions about language choice based on a many factors. Which factors
 are important depend on whether they work on projects big or small, on teams big
@@ -205,7 +213,7 @@ Language properties:
 ## Compiler
 
 The overall design of the compiler is in flux though it is shaping up to look a
-lot like other compilers. The author has researched past and current SML/NJ
+lot like other compilers. I have perused past and current SML/NJ
 architectures, the current rust compiler design, and academic efforts including
 nanopass compiler designs. One thing is for certain: Every compiler design
 differs for non-technical reasons, and they all solve similar problems despite

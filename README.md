@@ -15,7 +15,7 @@ Goals:
  - Integrate with the rust ecosystem
  - Built for the cloud:
    - run security and efficiently on serverless compute platforms
-   - statically linked native binaries
+   - statically linked binaries with fast startup times
    - run in browsers as WebAssembly
 
 See the draft [design doc](doc/design.md) for more info about
@@ -58,6 +58,20 @@ To compile the source file into the wasm format, run the compiler through cargo:
 cargo run -p minnie-compiler -- hello.min
 ```
 This outputs `hello.minw` which contains WebAssembly source.
+
+## Participating
+
+I welcome contributors, potential partners, and fellow enthusiasts who just want
+to leave a comment. This project is in its infancy so there is no GitHub
+Organization or foundation set up to administer it and no Code of Conduct. But
+if people express an interest in this work, I will enthusiastically set up an
+Organization and make it "ours", not "mine". Please don't let the fact that one
+person began the project stop you from sharing in its future ownership and
+community.
+
+There are plenty of easy tasks that I have set aside for someone looking for 
+a small thing to poke at and get merged in. Open an issue, PR, or email me 
+to get started.
 
 ## Code Layout
 
