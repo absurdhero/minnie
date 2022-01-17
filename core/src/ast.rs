@@ -206,7 +206,7 @@ pub type TypedErrorNode = ErrorNode<TypedSpExpr>;
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ErrorNodeKind {
-    #[error("expected {expected:?} but found {found:?}")]
+    #[error("expected {expected} but found {found}")]
     TypeMismatch { expected: Type, found: Type },
     #[error("{0}")]
     TypeError(String),
