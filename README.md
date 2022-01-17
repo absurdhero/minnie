@@ -1,5 +1,7 @@
 # Minnie
 
+[![Build Status](https://github.com/absurdhero/minnie/actions/workflows/build.yml/badge.svg)](https://github.com/absurdhero/minnie/actions)
+
 Minnie is programming language designed for productive and safe software
 development that uses advanced features to make programming less
 frustrating and great for large, collaborative, code-bases.
