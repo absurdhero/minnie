@@ -21,6 +21,11 @@ Papers and Articles that influence the design of the compiler and runtime enviro
 [A critique of Standard ML; Appel](https://www.cs.princeton.edu/~appel/papers/critique.pdf)
 - An aggregated list of critiques about ML and thoughtful responses.
 
+[First impressions of Swift by the founder of Rust](https://graydon2.dreamwidth.org/5785.html)
+
+[My Least Favorite Rust Type](https://ridiculousfish.com/blog/posts/least-favorite-rust-type.html)
+- A critique of rust's range type. A great list of design problems to avoid.
+
 ## Type Theory
 
 [Intro to Type Theory](https://mukulrathi.com/create-your-own-programming-language/intro-to-type-checking/)
@@ -67,9 +72,19 @@ Practical techniques for working with WebAssembly using rust and cargo.
 
 [A Practical Guide to WebAssembly Memory](https://radu-matei.com/blog/practical-guide-to-wasm-memory/)
 
+[Binaryen](https://github.com/WebAssembly/binaryen)
+- A wasm-inspired IR format. It could make a good alternative compiler backend.
+
 ## Miscellaneous
 
 Writings that people interested in this project may also find interesting.
 
 [Fast String Interning in Rust](https://matklad.github.io/2020/03/22/fast-simple-rust-interner.html)
 
+## More Lists
+
+[List of Research Inspired by Rust](https://github.com/brson/my-rust-lists/blob/master/rust-inspired-research.md)
+- Various post-rust research in the 21st century
+
+[What's Next?; Graydon Hoare](https://graydon2.dreamwidth.org/253769.html)
+- Lots of ideas for what could be improved in future languages
