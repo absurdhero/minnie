@@ -5,7 +5,7 @@ development that uses advanced features to make programming less
 frustrating and great for large, collaborative, code-bases.
 
 Goals:
- - Rust-like syntax but without lifetimes
+ - Familiar rust-like syntax but without lifetimes
  - Statically typed but with optional type annotations --
    You only specify types if you want
  - An efficient runtime with minimal garbage collection
@@ -15,6 +15,10 @@ Goals:
    - run security and efficiently on serverless compute platforms
    - statically linked native binaries
    - run in browsers as WebAssembly
+
+See the draft [design doc](doc/design.md) for more info about
+where the language is heading and a list of [references](doc/references.md) 
+that influence how the language is implemented.
 
 ### Getting Started
 
