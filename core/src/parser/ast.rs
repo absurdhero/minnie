@@ -1,11 +1,9 @@
-use crate::lexer::{LexError, Lexer, Token};
+use super::lexical_env::LexicalEnv;
+use crate::lexer::{LexError, Token};
 use crate::module::ModuleEnv;
 use crate::span::Span;
 use crate::types::{Type, ID};
-use crate::{grammar, module};
 use itertools::Itertools;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ops::Range;
 use thiserror::Error;
 
@@ -487,16 +485,6 @@ impl UntypedSpExpr {
     }
 }
 
-impl UntypedExprKind {
-    // called by the lalrpop grammar to record recovery actions
-    pub fn from_error(error_recovery: &ErrorRecovery<'_>) -> UntypedExprKind {
-        UntypedExprKind::Error(ErrorNode {
-            kind: ErrorNodeKind::ParseError(map_lalrpop_error(&error_recovery.error).item),
-            expr: None,
-        })
-    }
-}
-
 fn type_error(error: TypedErrorNode, span: Range<usize>, new_type: Type) -> TypedSpExpr {
     Span {
         start: span.start,
@@ -537,7 +525,7 @@ fn type_error_annotation(expr: TypedSpExpr, msg: String) -> TypedSpExpr {
 }
 
 impl TypedSpExpr {
-    fn new(start: usize, end: usize, expr: ExprKind<TypedSpExpr>, ty: Type) -> TypedSpExpr {
+    pub fn new(start: usize, end: usize, expr: ExprKind<TypedSpExpr>, ty: Type) -> TypedSpExpr {
         Span {
             start,
             end,
@@ -665,255 +653,10 @@ pub struct ParseResult {
     pub module_env: ModuleEnv,
 }
 
-pub struct Module {
-    /// Top level functions
-    pub functions: Vec<TypedSpExpr>,
-    pub module_env: ModuleEnv,
-}
-
-impl From<ParseResult> for Module {
-    fn from(result: ParseResult) -> Self {
-        let ParseResult { ast, module_env } = result;
-        if let ExprKind::Block(exprs) = ast.item.kind {
-            Module {
-                // Currently, only functions exist at the top-level.
-                functions: exprs,
-                module_env,
-            }
-        } else {
-            panic!("root of ast is not a block");
-        }
-    }
-}
-
-/// Parse program text and return its type-checked AST
-///
-/// # arguments
-///
-/// * `program` - The program text for a single module
-pub fn parse_module(program: &str) -> Result<Module, Vec<Span<AstError>>> {
-    let mut lexer = Lexer::new(program);
-    let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
-
-    let parser = grammar::ProgramParser::new();
-    let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
-
-    validate(lexer, recovered_errors, result).map(Module::from)
-}
-
-/// Parse an expression and return its type-checked AST
-///
-/// # arguments
-///
-/// * `expr` - The text of an expression
-pub fn parse_expr(expr_str: &str) -> Result<ParseResult, Vec<Span<AstError>>> {
-    let mut lexer = Lexer::new(expr_str);
-    let mut recovered_errors: Vec<ErrorRecovery<'_>> = Vec::new();
-
-    let parser = grammar::ReplExpressionParser::new();
-    let result: Result<UntypedSpExpr, ParseError> = parser.parse(&mut recovered_errors, &mut lexer);
-
-    validate(lexer, recovered_errors, result)
-}
-
-/// Parse an expression and wrap it in a top-level function.
-///
-/// # arguments
-///
-/// * `expr` - The text of an expression
-pub fn parse_expr_as_top_level(str_expr: &str) -> Result<Module, Vec<Span<AstError>>> {
-    let result = parse_expr(str_expr);
-    result.map(|ParseResult { ast, module_env }| {
-        let range = ast.range();
-        let ty = ast.ty.clone();
-        let wrapper = ExprKind::Function(FuncExpr {
-            name: "main".to_string(),
-            id: ID::PubFuncId("main".to_string()),
-            params: vec![],
-            returns: ty.clone(),
-            body: ast,
-        });
-        let wrapper = TypedSpExpr::new(
-            range.start,
-            range.end,
-            wrapper,
-            Type::Function {
-                params: vec![],
-                returns: Box::new(ty),
-            },
-        );
-        Module {
-            functions: vec![wrapper],
-            module_env,
-        }
-    })
-}
-
-fn validate(
-    lexer: Lexer,
-    recovered_errors: Vec<ErrorRecovery>,
-    result: Result<UntypedSpExpr, ParseError>,
-) -> Result<ParseResult, Vec<Span<AstError>>> {
-    // convert lex errors into AstError
-    let mut errors: Vec<Span<AstError>> = lexer
-        .errors
-        .into_iter()
-        // map lex errors into AstError
-        .map(|s| s.map(AstError::LexError))
-        // append any errors encountered during parsing
-        .chain(
-            recovered_errors
-                .into_iter()
-                .map(|r| map_lalrpop_error(&r.error)),
-        )
-        .collect();
-
-    match result {
-        Ok(expr) => {
-            // do type checking only if there are no parse errors
-            if errors.is_empty() {
-                let module_env = module::basis_imports();
-                let mut env = LexicalEnv::new_root(&module_env);
-                let typed_tree = expr.into_typed(&mut env);
-                Ok(ParseResult {
-                    ast: typed_tree,
-                    module_env,
-                })
-            } else {
-                Err(errors)
-            }
-        }
-        Err(e) => {
-            // put the final error on the end of the error list presuming that
-            // earlier lex errors or recovered errors were the root cause(s).
-            errors.push(map_lalrpop_error(&e));
-            Err(errors)
-        }
-    }
-}
-
-fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
-    match error {
-        &ParseError::UnrecognizedEOF { location, .. } => {
-            (location..location, AstError::UnrecognizedEOF)
-        }
-        &ParseError::InvalidToken { location } => (
-            location..location,
-            AstError::LexError(LexError::InvalidToken),
-        ),
-        &ParseError::UnrecognizedToken {
-            token,
-            ref expected,
-        } => (
-            token.0..token.2,
-            AstError::UnexpectedToken(token.1.to_string(), expected.to_vec()),
-        ),
-        &ParseError::ExtraToken { token } => {
-            (token.0..token.2, AstError::LexError(LexError::InvalidToken))
-        }
-        ParseError::User { error } => (Range::<usize>::from(error), error.item.clone()),
-    }
-    .into()
-}
-
-#[derive(Debug)]
-pub struct LexicalEnv<'a> {
-    // association of symbol to its unique ID and type
-    bindings: RefCell<HashMap<String, (ID, Type)>>,
-    parent: Option<&'a LexicalEnv<'a>>,
-    func_count: usize,
-    var_count: usize,
-    imports: &'a ModuleEnv,
-}
-
-impl<'a> LexicalEnv<'a> {
-    /// Create a new lexical scope inside of another one
-    fn new(parent: &'a LexicalEnv) -> LexicalEnv<'a> {
-        LexicalEnv {
-            bindings: RefCell::new(HashMap::new()),
-            parent: Some(parent),
-            var_count: parent.var_count,
-            func_count: parent.func_count,
-            imports: parent.imports,
-        }
-    }
-
-    /// Create an empty top-level lexical environment
-    ///
-    /// # arguments
-    ///
-    /// * `module_env` - The imported symbols. This is only being passed into a new lexical env instead
-    ///  of being mutated by the env during type checking because the `use` statement does not exist yet.
-    ///  Until then, imports are controlled by the runtime a priori and imports are immutable.
-    fn new_root(module_env: &'a ModuleEnv) -> LexicalEnv<'a> {
-        LexicalEnv {
-            bindings: RefCell::new(HashMap::new()),
-            parent: None,
-            var_count: 0,
-            func_count: module_env.imports.len(),
-            imports: module_env,
-        }
-    }
-
-    /// Add an identifier for a variable to the environment
-    ///
-    /// This function also increments a counter used to uniquely identical lexical variables.
-    /// WebAssembly tracks `locals` by unique incrementing number so this stage of compilation
-    /// assigns numbers to each unique variable.
-    ///
-    /// We are effectively performing "alpha-conversion", where a variable that shadows another
-    /// gets its own ID distinct from the ID of variables by the same name in outer scopes.
-    fn add_var(&mut self, name: &str, ty: &Type) -> ID {
-        let new_id = ID::VarId(self.var_count);
-        self.var_count += 1;
-        self.bindings
-            .borrow_mut()
-            .insert(name.to_string(), (new_id.clone(), ty.clone()));
-        new_id
-    }
-
-    /// Add a new function to the environment
-    ///
-    /// Functions have their own numeric indexes separate from variables
-    /// because webassembly tracks them in their own index space.
-    fn add_func(&mut self, id: &ID, ty: Type) -> ID {
-        let (new_id, name) = match id {
-            ID::Name(name) => {
-                self.func_count += 1;
-                (ID::FuncId(self.func_count - 1), name)
-            }
-            pub_id @ ID::PubFuncId(name) => (pub_id.clone(), name),
-            _ => panic!("tried to add a function with an unsupported ID variant"),
-        };
-        self.bindings
-            .borrow_mut()
-            .insert(name.to_string(), (new_id.clone(), ty));
-        new_id
-    }
-
-    fn update_func(&self, name: &str, ty: Type) {
-        let mut bindings = self.bindings.borrow_mut();
-        let (id, _) = bindings
-            .remove(name)
-            .expect("could not update lexical mapping for non-existent function");
-        bindings.insert(name.to_string(), (id, ty));
-    }
-
-    /// Return the unique ID and Type of a variable name in this lexical scope or an outer
-    /// scope, ascending upwards through the lexical environment up to the module scope.
-    fn id_type(&self, name: &str) -> Option<(ID, Type)> {
-        self.bindings
-            .borrow()
-            .get(name)
-            .cloned()
-            .or_else(|| self.parent.and_then(|p| p.id_type(name)))
-            .or_else(|| self.imports.id_type(name))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::ast::*;
+    use crate::parser::ast::*;
+    use crate::parser::*;
     use crate::span::Span;
     use crate::types::*;
 

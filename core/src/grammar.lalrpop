@@ -1,4 +1,5 @@
-use crate::ast::{AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, ArithOp, CompareOp};
+use crate::parser::ast::{
+    AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, ArithOp, CompareOp};
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
@@ -52,7 +53,7 @@ pub Program: UntypedSpExpr = {
     Sp<Module>,
 }
 
-pub Module: UntypedExprKind = {
+Module: UntypedExprKind = {
         Sequence<Sp<Function>> => UntypedExprKind::Block(<>),
 }
 
@@ -60,7 +61,7 @@ pub Module: UntypedExprKind = {
 pub ReplExpression: UntypedSpExpr = {
     Sp<ExpressionList>,
 }
-pub ExpressionList: UntypedExprKind = {
+ExpressionList: UntypedExprKind = {
     <mut v:MaybeStatements> => {
         // if the program has just one statement, unwrap it.
         if v.len() == 1 {

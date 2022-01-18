@@ -6,9 +6,9 @@ use anyhow::Result;
 use gumdrop::Options;
 use rustyline::error::ReadlineError;
 
-use minnie::ast::AstError;
 use minnie::compiler::{Compiler, CompilerError, ErrorType};
 use minnie::error_reporting;
+use minnie::parser::ast::AstError;
 
 use eval::Eval;
 

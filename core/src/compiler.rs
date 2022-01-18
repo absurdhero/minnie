@@ -3,12 +3,12 @@ use std::ops::Range;
 
 use thiserror::Error;
 
+use crate::parser;
 #[cfg(feature = "serialize_ast")]
 use serde::Serialize;
 
-use crate::ast;
-use crate::ast::ExprKind::Identifier;
-use crate::ast::{
+use crate::parser::ast;
+use crate::parser::ast::{
     ArithOp, CompareOp, ErrorNode, ErrorNodeKind, Expr, ExprKind, FuncExpr, TypedExprKind,
     TypedSpExpr,
 };
@@ -95,7 +95,7 @@ impl<'a> Compiler {
     ) -> Result<ModuleSource, Vec<CompilerError>> {
         self.compile_ast(
             file_name,
-            ast::parse_module(program).map_err(|e| self.map_parse_error(e))?,
+            parser::parse_module(program).map_err(|e| self.map_parse_error(e))?,
         )
     }
 
@@ -111,7 +111,7 @@ impl<'a> Compiler {
         text: &'a str,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
         let parse_result =
-            ast::parse_expr_as_top_level(text).map_err(|e| self.map_parse_error(e))?;
+            parser::parse_expr_as_top_level(text).map_err(|e| self.map_parse_error(e))?;
 
         self.compile_ast(file_name, parse_result)
     }
@@ -125,9 +125,9 @@ impl<'a> Compiler {
     fn compile_ast(
         &self,
         file_name: &str,
-        module: ast::Module,
+        module: parser::Module,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
-        let ast::Module {
+        let parser::Module {
             functions: exprs,
             module_env,
         } = module;
@@ -346,7 +346,7 @@ impl<'a> Compiler {
                 for param in params {
                     self.codegen(param, instructions);
                 }
-                if let Identifier(ID::FuncId(id)) = op.kind {
+                if let ExprKind::Identifier(ID::FuncId(id)) = op.kind {
                     // direct call when the function ID is known at compile time
                     push!("call ${}", id);
                 } else {

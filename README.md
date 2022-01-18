@@ -92,3 +92,7 @@ Runs a program. If you give it a source file, it will compile and then run it.
 ### REPL
 
 An experimental REPL that doesn't support much of the language yet.
+
+### Test
+
+The acceptance test suite which has its own [README](test/README.md).

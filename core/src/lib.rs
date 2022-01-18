@@ -6,17 +6,17 @@ extern crate log;
 use crate::compiler::{Compiler, ModuleSource};
 use std::path::Path;
 
-pub mod ast;
 pub mod compiler;
 pub mod error_reporting;
+pub mod parser;
 pub mod runtime;
 pub mod types;
 
-mod lexer;
+pub mod lexer;
 mod module;
 mod span;
 
-lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+lalrpop_mod!(#[allow(clippy::all)] pub(crate) grammar);
 
 /// convenience function that reads a file, compiles it, and prints any errors
 pub fn compile_file(file_path: &str) -> Result<ModuleSource, anyhow::Error> {

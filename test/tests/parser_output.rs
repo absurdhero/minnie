@@ -1,5 +1,5 @@
 use insta;
-use minnie::ast::parse_expr;
+use minnie::parser::parse_expr;
 
 ///! Tests the parse tree of small expressions that are best tested individually.
 ///! These tests are verified with snapshots in the snapshots/ directory.
