@@ -3,8 +3,11 @@ use crate::parser::ast::{
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
+use crate::symbols::{Symbol, SymbolTable};
 
-grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<'input>>);
+grammar<'input, 'err>(
+    errors: &'err mut Vec<ErrorRecovery<'input>>,
+    symbols: &'err mut SymbolTable);
 
 extern {
     type Error = Span<AstError>;
@@ -47,6 +50,11 @@ extern {
 /// wraps UntypedExprKind in a Span which tracks its location
 Sp<Rule>: UntypedSpExpr =
     <l: @L> <rule: Rule> <r: @R> => (l, Box::new(rule.into()), r).into();
+
+// Interns a string
+Symbol<Rule>: Symbol = {
+    <rule: Rule> => symbols.intern_str(rule),
+}
 
 // Root of a module
 pub Program: UntypedSpExpr = {
@@ -117,7 +125,7 @@ ExpressionStatement: UntypedExprKind = {
 }
 
 LetStatement: UntypedExprKind = {
-    "let" <i:ID> <t:TypeAscription?> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Name(i.to_string()), t, e),
+    "let" <i:Symbol<ID>> <t:TypeAscription?> <e:MaybeInitExpr> ";" => UntypedExprKind::Let(ID::Symbol(i), t, e),
 };
 
 Block: UntypedExprKind = {
@@ -207,9 +215,8 @@ Term: UntypedExprKind = {
     "(" <!> ")" => { errors.push(<>.clone()); UntypedExprKind::from_error(&<>) },
 };
 
-Identifier:
-UntypedExprKind = {
-    ID => UntypedExprKind::Identifier(ID::Name(<>.to_string())),
+Identifier: UntypedExprKind = {
+    Symbol<ID> => UntypedExprKind::Identifier(ID::Symbol(<>)),
 }
 
 IfExpr: UntypedExprKind = {
@@ -219,13 +226,13 @@ IfExpr: UntypedExprKind = {
 // Functions
 
 Function: UntypedExprKind = {
-    <v:Visibility?> "fn" <name:ID> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
+    <v:Visibility?> "fn" <name:Symbol<ID>> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
     let id = if v == Some("pub") {
-        ID::PubFuncId(name.to_string())
+        ID::PubFuncId(name.clone())
     } else {
-        ID::Name(name.to_string())
+        ID::Symbol(name.clone())
     };
-    UntypedExprKind::Function(FuncExpr::new(name.to_string(), id, params, ret, block))
+    UntypedExprKind::Function(FuncExpr::new(name, id, params, ret, block))
   },
 }
 
@@ -241,7 +248,7 @@ FunctionParameters: Vec<FormalParam> = {
 // It would also be nice to make the type optional
 // but that will require more complex type inference.
 FunctionParam: FormalParam = {
-    <id:ID> <ty:TypeAscription> => FormalParam { name: ID::Name(id.to_string()), ty },
+    <id:Symbol<ID>> <ty:TypeAscription> => FormalParam { name: ID::Symbol(id), ty },
 }
 
 FunctionReturnType: Type = {

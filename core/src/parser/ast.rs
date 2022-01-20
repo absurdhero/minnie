@@ -2,6 +2,7 @@ use super::lexical_env::LexicalEnv;
 use crate::lexer::{LexError, Token};
 use crate::module::ModuleEnv;
 use crate::span::Span;
+use crate::symbols::Symbol;
 use crate::types::{Type, ID};
 use itertools::Itertools;
 use std::ops::Range;
@@ -111,7 +112,7 @@ pub enum CompareOp {
 #[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct FuncExpr<T> {
     pub id: ID,
-    pub name: String,
+    pub name: Symbol,
     pub params: Vec<FormalParam>,
     pub returns: Type,
     pub body: T,
@@ -119,7 +120,7 @@ pub struct FuncExpr<T> {
 
 impl<T> FuncExpr<T> {
     pub fn new(
-        name: String,
+        name: Symbol,
         id: ID,
         params: Vec<FormalParam>,
         returns: Type,
@@ -370,12 +371,12 @@ impl UntypedSpExpr {
                 Expr::new(ExprKind::Block(typed_exprs), ty)
             }
             ExprKind::Identifier(i) => {
-                if let Some((id, ty)) = lexical_env.id_type(i.name()) {
+                if let Some((id, ty)) = lexical_env.id_type(i.symbol()) {
                     Expr::new(ExprKind::Identifier(id), ty)
                 } else {
                     return type_error(
                         ErrorNode {
-                            kind: ErrorNodeKind::UnknownIdentifier(i.name().clone()),
+                            kind: ErrorNodeKind::UnknownIdentifier(i.to_string()),
                             expr: Some(TypedSpExpr::new(
                                 start,
                                 end,
@@ -392,7 +393,7 @@ impl UntypedSpExpr {
                 let binding = e.map(|e| e.into_typed(lexical_env));
 
                 if let Some(ty) = ty {
-                    let uid = lexical_env.add_var(id.name(), &ty);
+                    let uid = lexical_env.add_var(id.symbol(), &ty);
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
                             bind_expr = type_error_correction(ty.clone(), bind_expr)
@@ -403,7 +404,7 @@ impl UntypedSpExpr {
                     }
                 } else if let Some(expr) = binding {
                     let ty = &expr.ty;
-                    let uid = lexical_env.add_var(id.name(), ty);
+                    let uid = lexical_env.add_var(id.symbol(), ty);
                     Expr::new(ExprKind::Let(uid, Some(ty.clone()), Some(expr)), Type::Void)
                 } else {
                     return type_error_annotation(
@@ -434,7 +435,7 @@ impl UntypedSpExpr {
                 let typed_params: Vec<FormalParam> = params
                     .into_iter()
                     .map(|p| FormalParam {
-                        name: func_env.add_var(p.name.name(), &p.ty),
+                        name: func_env.add_var(p.name.symbol(), &p.ty),
                         ty: p.ty,
                     })
                     .collect();
@@ -627,7 +628,7 @@ impl TypedSpExpr {
                         local[*id] = ty.clone();
                     }
                     ID::PubFuncId(_) => {}
-                    ID::Name(_) => {
+                    ID::Symbol(_) => {
                         panic!("local_identifiers called on an untransformed tree")
                     }
                 }
@@ -658,6 +659,7 @@ mod tests {
     use crate::parser::ast::*;
     use crate::parser::*;
     use crate::span::Span;
+    use crate::symbols::SymbolTable;
     use crate::types::*;
 
     impl PartialEq for Span<AstError> {
@@ -770,15 +772,18 @@ mod tests {
 
     #[test]
     fn identifiers() {
+        // generate an empty symbol table for each test case
+        let sym = || SymbolTable::default();
+
         parses! {
-            "abc" => ExprKind::Identifier(ID::Name("abc".to_string()))
-            "a" => ExprKind::Identifier(ID::Name("a".to_string()))
-            "a123" => ExprKind::Identifier(ID::Name("a123".to_string()))
-            "_" => ExprKind::Identifier(ID::Name("_".to_string()))
-            "_a" => ExprKind::Identifier(ID::Name("_a".to_string()))
-            "Caps" => ExprKind::Identifier(ID::Name("Caps".to_string()))
-            "CAPS" => ExprKind::Identifier(ID::Name("CAPS".to_string()))
-            "日本語" => ExprKind::Identifier(ID::Name("日本語".to_string()))
+            "abc" => ExprKind::Identifier(ID::Symbol(sym().intern_str("abc")))
+            "a" => ExprKind::Identifier(ID::Symbol(sym().intern_str("a")))
+            "a123" => ExprKind::Identifier(ID::Symbol(sym().intern_str("a123")))
+            "_" => ExprKind::Identifier(ID::Symbol(sym().intern_str("_")))
+            "_a" => ExprKind::Identifier(ID::Symbol(sym().intern_str("_a")))
+            "Caps" => ExprKind::Identifier(ID::Symbol(sym().intern_str("Caps")))
+            "CAPS" => ExprKind::Identifier(ID::Symbol(sym().intern_str("CAPS")))
+            "日本語" => ExprKind::Identifier(ID::Symbol(sym().intern_str("日本語")))
         };
     }
 

@@ -15,6 +15,7 @@ pub mod types;
 pub mod lexer;
 mod module;
 mod span;
+mod symbols;
 
 lalrpop_mod!(#[allow(clippy::all)] pub(crate) grammar);
 

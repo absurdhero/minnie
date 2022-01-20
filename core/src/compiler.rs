@@ -307,8 +307,8 @@ impl<'a> Compiler {
             }
             ExprKind::Number(n) => push!("i64.const {}", n),
             ExprKind::Identifier(id) => match id {
-                ID::Name(_) => unreachable!(),
-                ID::PubFuncId(_) => push!("i32.const ${}", id.name()),
+                ID::Symbol(_) => unreachable!(),
+                ID::PubFuncId(_) => push!("i32.const ${}", id.symbol()),
                 ID::VarId(_) => push!("local.get {}", id.id()),
                 ID::FuncId(_) => push!("i32.const {}", id.id()),
             },
