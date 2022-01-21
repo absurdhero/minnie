@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use crate::compiler::{CompilerError, ErrorType};
 
-///! Configures and wraps the codespan_reporting library.
+///! Configures and wraps the `codespan_reporting` library.
 
 /// Convenience function for printing errors in a single source file in one step.
 pub fn print_error(
@@ -54,7 +54,7 @@ impl ErrorReporting {
                         labels.push(
                             Label::secondary((), Range::from(secondary))
                                 .with_message(secondary.to_string()),
-                        )
+                        );
                     }
                 }
             }
@@ -82,7 +82,7 @@ pub mod test_util {
     use std::cell::RefCell;
     use std::io;
 
-    /// render a list of CompileErrors to a String for verification by tests
+    /// render a list of compiler errors to a String for verification by tests
     pub fn capture_errors(
         source_name: &str,
         source: &str,

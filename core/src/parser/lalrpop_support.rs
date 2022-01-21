@@ -20,7 +20,7 @@ pub fn map_lalrpop_error(error: &ParseError) -> Span<AstError> {
             ref expected,
         } => (
             token.0..token.2,
-            AstError::UnexpectedToken(token.1.to_string(), expected.to_vec()),
+            AstError::UnexpectedToken(token.1.to_string(), expected.clone()),
         ),
         &ParseError::ExtraToken { token } => {
             (token.0..token.2, AstError::LexError(LexError::InvalidToken))

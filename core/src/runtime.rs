@@ -78,6 +78,7 @@ impl Runtime {
         Ok(())
     }
 
+    /// Executes an exported function
     pub fn eval(&mut self, function_name: &str) -> Result<ReturnValue, RuntimeError> {
         let mut linker = Linker::new(&self.engine);
 
@@ -99,7 +100,7 @@ impl Runtime {
 
         let top_level = instance
             .get_func(&mut self.store, function_name)
-            .unwrap_or_else(|| panic!("`{}` is not an exported function", function_name));
+            .ok_or_else(|| RuntimeError::Any(anyhow::Error::msg("exported function not found")))?;
 
         if let Type::Void = last_source.return_type {
             let result = top_level.call(&mut self.store, &[], &mut []);

@@ -45,7 +45,7 @@ impl Display for Type {
 
 /// Stores a variable or function identifier.
 ///
-/// During the initial parsing, identifiers are represented as ID::Symbol.
+/// During the initial parsing, identifiers are represented as `ID::Symbol`.
 /// But during type analysis, identifiers are transformed into numeric IDs
 /// with separate ID spaces for variables and functions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,9 +81,8 @@ impl ID {
 
     pub fn id(&self) -> usize {
         match self {
+            ID::VarId(id) | ID::FuncId(id) => *id,
             ID::Symbol(_) => panic!("accessed numeric ID on unresolved textual ID"),
-            ID::VarId(id) => *id,
-            ID::FuncId(id) => *id,
             ID::PubFuncId(_) => panic!("accessed numeric ID on public function symbol"),
         }
     }

@@ -60,7 +60,7 @@ impl PartialEq for UntypedSpExpr {
 }
 impl Eq for UntypedSpExpr {}
 
-/// ExprKind is used to build trees of untyped and typed expressions
+/// `ExprKind` is used to build trees of untyped and typed expressions
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub enum ExprKind<T> {
@@ -111,8 +111,8 @@ pub enum CompareOp {
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize_ast", derive(Serialize))]
 pub struct FuncExpr<T> {
-    pub id: ID,
     pub name: Symbol,
+    pub id: ID,
     pub params: Vec<FormalParam>,
     pub returns: Type,
     pub body: T,
@@ -275,71 +275,68 @@ impl UntypedSpExpr {
 
                 // verify that func_type is a Function and that the arguments
                 // match the formal parameters.
-                match oper_type {
-                    Type::Function {
-                        params: formal_params,
-                        returns,
-                    } => {
-                        let actual_len = args.len();
+                if let Type::Function {
+                    params: formal_params,
+                    returns,
+                } = oper_type
+                {
+                    let actual_len = args.len();
 
-                        let verified_actuals = args
-                            .into_iter()
-                            .zip_longest(formal_params.clone())
-                            // ignore too few arguments. Make a single error for that below.
-                            .filter(|z| !z.is_right())
-                            .map(|z| {
-                                if z.is_both() {
-                                    let (actual, formal) = z.both().unwrap();
-                                    actual.assert_type(lexical_env, formal)
-                                } else {
-                                    // z.is_left() -- too many arguments
-                                    type_error_annotation(
-                                        z.left().unwrap().into_typed(lexical_env),
-                                        format!(
-                                            "this function takes {} arguments but {} were supplied",
-                                            formal_params.len(),
-                                            actual_len
-                                        ),
-                                    )
-                                }
-                            })
-                            .collect::<Vec<TypedSpExpr>>();
-                        // now handle the case where there weren't enough arguments
-                        if actual_len < formal_params.len() {
-                            return type_error_annotation(
-                                TypedSpExpr::new(
-                                    start,
-                                    end,
-                                    ExprKind::Call(typed_op, verified_actuals),
-                                    returns.as_ref().clone(),
-                                ),
-                                format!(
-                                    "this function takes {} arguments but {} were supplied",
-                                    formal_params.len(),
-                                    actual_len
-                                ),
-                            );
-                        } else {
-                            Expr::new(
+                    let verified_actuals = args
+                        .into_iter()
+                        .zip_longest(formal_params.clone())
+                        // ignore too few arguments. Make a single error for that below.
+                        .filter(|z| !z.is_right())
+                        .map(|z| {
+                            if z.is_both() {
+                                let (actual, formal) = z.both().unwrap();
+                                actual.assert_type(lexical_env, formal)
+                            } else {
+                                // z.is_left() -- too many arguments
+                                type_error_annotation(
+                                    z.left().unwrap().into_typed(lexical_env),
+                                    format!(
+                                        "this function takes {} arguments but {} were supplied",
+                                        formal_params.len(),
+                                        actual_len
+                                    ),
+                                )
+                            }
+                        })
+                        .collect::<Vec<TypedSpExpr>>();
+                    // now handle the case where there weren't enough arguments
+                    if actual_len < formal_params.len() {
+                        return type_error_annotation(
+                            TypedSpExpr::new(
+                                start,
+                                end,
                                 ExprKind::Call(typed_op, verified_actuals),
                                 returns.as_ref().clone(),
-                            )
-                        }
+                            ),
+                            format!(
+                                "this function takes {} arguments but {} were supplied",
+                                formal_params.len(),
+                                actual_len
+                            ),
+                        );
                     }
-                    _ => {
-                        // if the operator isn't a function, return a corrected return type
-                        // and guess what kind of function was expected.
-                        let typed_actuals: Vec<TypedSpExpr> = args
-                            .into_iter()
-                            .map(|p| p.into_typed(lexical_env))
-                            .collect();
-                        let expected = Type::Function {
-                            params: typed_actuals.iter().map(|a| a.ty.clone()).collect(),
-                            returns: Box::new(Type::Unknown),
-                        };
-                        let typed_op = type_error_correction(expected, typed_op);
-                        Expr::new(ExprKind::Call(typed_op, typed_actuals), Type::Unknown)
-                    }
+                    Expr::new(
+                        ExprKind::Call(typed_op, verified_actuals),
+                        returns.as_ref().clone(),
+                    )
+                } else {
+                    // if the operator isn't a function, return a corrected return type
+                    // and guess what kind of function was expected.
+                    let typed_actuals: Vec<TypedSpExpr> = args
+                        .into_iter()
+                        .map(|p| p.into_typed(lexical_env))
+                        .collect();
+                    let expected = Type::Function {
+                        params: typed_actuals.iter().map(|a| a.ty.clone()).collect(),
+                        returns: Box::new(Type::Unknown),
+                    };
+                    let typed_op = type_error_correction(expected, typed_op);
+                    Expr::new(ExprKind::Call(typed_op, typed_actuals), Type::Unknown)
                 }
             }
             ExprKind::If(c, t, f) => {
@@ -396,7 +393,7 @@ impl UntypedSpExpr {
                     let uid = lexical_env.add_var(id.symbol(), &ty);
                     if let Some(mut bind_expr) = binding {
                         if ty != bind_expr.ty {
-                            bind_expr = type_error_correction(ty.clone(), bind_expr)
+                            bind_expr = type_error_correction(ty.clone(), bind_expr);
                         }
                         Expr::new(ExprKind::Let(uid, Some(ty), Some(bind_expr)), Type::Void)
                     } else {
@@ -474,14 +471,14 @@ impl UntypedSpExpr {
 
     /// converts an untyped expr into a typed one and checks that it is the expected type.
     ///
-    /// If the type doesn't match, it wraps the expr in an ErrorNode
+    /// If the type doesn't match, it wraps the expr in an `ErrorNode`
     /// and sets it to the desired type so parsing may continue.
     fn assert_type(self, lexical_env: &mut LexicalEnv, expected: Type) -> TypedSpExpr {
         let typed = self.into_typed(lexical_env);
-        if typed.ty != expected {
-            type_error_correction(expected, typed)
-        } else {
+        if typed.ty == expected {
             typed
+        } else {
+            type_error_correction(expected, typed)
         }
     }
 }
@@ -536,7 +533,7 @@ impl TypedSpExpr {
 
     /// Get a list of the errors encountered when descending the tree.
     ///
-    /// Errors are returned in bottom-up order except when roots_only
+    /// Errors are returned in bottom-up order except when `roots_only`
     /// is set in which case they are returned in the order of the source text.
     ///
     /// # Arguments
@@ -597,7 +594,7 @@ impl TypedSpExpr {
             TypedExprKind::Negate(e) => e.local_identifiers(local),
             TypedExprKind::ArithOp(l, _, r) | TypedExprKind::CompareOp(l, _, r) => {
                 l.local_identifiers(local);
-                r.local_identifiers(local)
+                r.local_identifiers(local);
             }
             TypedExprKind::Block(exprs) => {
                 for e in exprs {
@@ -607,7 +604,7 @@ impl TypedSpExpr {
             TypedExprKind::If(c, t, f) => {
                 c.local_identifiers(local);
                 t.local_identifiers(local);
-                f.local_identifiers(local)
+                f.local_identifiers(local);
             }
             TypedExprKind::Let(id, ty, e) => {
                 if let Some(expr) = e {
@@ -639,11 +636,11 @@ impl TypedSpExpr {
                     arg.local_identifiers(local);
                 }
             }
-            TypedExprKind::Identifier(_) => {}
-            TypedExprKind::Number(_) => {}
-            TypedExprKind::Bool(_) => {}
-            TypedExprKind::Function(_) => {}
-            TypedExprKind::Error(_) => {}
+            TypedExprKind::Identifier(_)
+            | TypedExprKind::Number(_)
+            | TypedExprKind::Bool(_)
+            | TypedExprKind::Function(_)
+            | TypedExprKind::Error(_) => {}
         }
     }
 }

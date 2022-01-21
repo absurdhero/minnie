@@ -10,14 +10,14 @@ use serde::Serialize;
 ///! A custom lexer using the Logos library
 ///!
 ///! Inspired by the LALRPOP Logos integration example
-///! at https://github.com/segeljakt/logos-lalrpop
+///! at <https://github.com/segeljakt/logos-lalrpop>
 
 /// Tokens
 ///
 /// The Logos tokenizer matches most-specific patterns first
 /// and it supports a subset of regex without greedy matching.
 ///
-/// When adding new tokens, refer to https://github.com/maciejhirsz/logos/issues/133
+/// When adding new tokens, refer to <https://github.com/maciejhirsz/logos/issues/133>
 /// to find working regular expressions for common language constructs.
 #[derive(Logos, Copy, Clone, Debug, PartialEq)]
 pub enum Token<'input> {
@@ -176,7 +176,7 @@ impl<'i> Lexer<'i> {
             logos: LogosLexer::new(input),
         }
     }
-    /// Convert error tokens to LexErrors
+    /// Convert error tokens to `LexError`
     fn convert(&mut self, token: Token<'i>) -> Result<Token<'i>, Span<LexError>> {
         let range = self.logos.span();
         match token {

@@ -78,12 +78,12 @@ impl Ord for Symbol {
 }
 
 /// For performance reasons, we hash on the index, not on the string.
-/// If two symbols were interned in different SymbolTables with different indices,
+/// If two symbols were interned in different symbol tables with different indices,
 /// their equality and hash equality will be consistent but non-deterministic.
 /// So you *must not* intermingle Symbols from different tables.
 impl Hash for Symbol {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state)
+        self.0.hash(state);
     }
 }
 

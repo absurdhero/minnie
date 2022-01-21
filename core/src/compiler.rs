@@ -95,7 +95,7 @@ impl<'a> Compiler {
     ) -> Result<ModuleSource, Vec<CompilerError>> {
         self.compile_ast(
             file_name,
-            parser::parse_module(program).map_err(|e| self.map_parse_error(e))?,
+            parser::parse_module(program).map_err(map_parse_error)?,
         )
     }
 
@@ -110,8 +110,7 @@ impl<'a> Compiler {
         file_name: &str,
         text: &'a str,
     ) -> Result<ModuleSource, Vec<CompilerError>> {
-        let parse_result =
-            parser::parse_expr_as_top_level(text).map_err(|e| self.map_parse_error(e))?;
+        let parse_result = parser::parse_expr_as_top_level(text).map_err(map_parse_error)?;
 
         self.compile_ast(file_name, parse_result)
     }
@@ -133,8 +132,7 @@ impl<'a> Compiler {
         } = module;
         let ast_errors: Vec<CompilerError> = exprs
             .iter()
-            .map(|e| e.errors(true))
-            .flatten()
+            .flat_map(|e| e.errors(true))
             .into_iter()
             .map(|n| match n {
                 ErrorNode::<TypedSpExpr> {
@@ -180,17 +178,17 @@ impl<'a> Compiler {
                 name,
                 index,
                 ty.wasm_type()
-            ))
+            ));
         }
 
         let mut main_func: Option<&FuncExpr<TypedSpExpr>> = None;
-        for expr in exprs.iter() {
+        for expr in &exprs {
             match &expr.kind {
                 TypedExprKind::Function(func) => {
                     if &func.name == "main" {
                         main_func = Some(func);
                     }
-                    function_definitions.push(self.function_def(func, &expr.ty))
+                    function_definitions.push(self.function_def(func, &expr.ty));
                 }
                 _ => {
                     panic!("only functions can exist at the top level")
@@ -260,7 +258,7 @@ impl<'a> Compiler {
                 Type::Function { .. } => "i32".to_string(),
                 _ => ty.wasm_type(),
             };
-            instructions.push(format!("(local ${} {})", id, type_descriptor))
+            instructions.push(format!("(local ${} {})", id, type_descriptor));
         }
 
         self.codegen(&*func.body, &mut instructions);
@@ -353,7 +351,7 @@ impl<'a> Compiler {
                     // otherwise, evaluate the operator which will push a function reference
                     // onto the stack where call_indirect will read it.
                     self.codegen(op, instructions);
-                    push!("call_indirect {}", op.ty.wasm_type())
+                    push!("call_indirect {}", op.ty.wasm_type());
                 }
             }
             ExprKind::Function(_) => {
@@ -376,7 +374,7 @@ impl<'a> Compiler {
                     for e in &v[0..(v.len() - 1)] {
                         self.codegen(e, instructions);
                         if e.kind.is_expression() && e.ty != Type::Void {
-                            push!("drop")
+                            push!("drop");
                         }
                     }
                     self.codegen(&v[v.len() - 1], instructions);
@@ -391,10 +389,10 @@ impl<'a> Compiler {
                 push!("end");
             }
             ExprKind::Bool(true) => {
-                push!("i32.const 1")
+                push!("i32.const 1");
             }
             ExprKind::Bool(false) => {
-                push!("i32.const 0")
+                push!("i32.const 0");
             }
             ExprKind::Let(id, _t, e) => {
                 if let Some(e) = e {
@@ -404,23 +402,23 @@ impl<'a> Compiler {
             }
         }
     }
+}
 
-    /// Map from Span<AstError> into a CompilerError
-    /// with context from the original source file.
-    fn map_parse_error(&self, parse_errors: Vec<Span<ast::AstError>>) -> Vec<CompilerError> {
-        parse_errors
-            .into_iter()
-            .map(|parse_error| {
-                let Span {
-                    start,
-                    end,
-                    item: error,
-                } = parse_error;
-                CompilerError {
-                    error: ErrorType::ParseError(error),
-                    span: Some(start..end),
-                }
-            })
-            .collect()
-    }
+/// Map from Span<AstError> into a `CompilerError`
+/// with context from the original source file.
+fn map_parse_error(parse_errors: Vec<Span<ast::AstError>>) -> Vec<CompilerError> {
+    parse_errors
+        .into_iter()
+        .map(|parse_error| {
+            let Span {
+                start,
+                end,
+                item: error,
+            } = parse_error;
+            CompilerError {
+                error: ErrorType::ParseError(error),
+                span: Some(start..end),
+            }
+        })
+        .collect()
 }
