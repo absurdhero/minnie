@@ -78,13 +78,17 @@ pub enum Token<'input> {
     #[token("bool")]
     Bool,
 
+    // Modules and Top-Level Items
+    #[token("mod")]
+    Mod,
+    #[token("pub")]
+    Pub,
+
     // functions
     #[token("fn")]
     Fn,
     #[token("->")]
     RArrow,
-    #[token("pub")]
-    Pub,
 
     /// token that represents lex errors
     #[error]
@@ -130,9 +134,11 @@ impl<'i> Display for Token<'i> {
             Token::Int => "int",
             Token::Bool => "bool",
 
+            Token::Mod => "mod",
+            Token::Pub => "pub",
+
             Token::Fn => "fn",
             Token::RArrow => "->",
-            Token::Pub => "pub",
 
             // this is an unsatisfying string representation
             Token::Error => "<unhandled>",

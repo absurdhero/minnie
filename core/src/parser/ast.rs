@@ -136,6 +136,22 @@ impl<T> FuncExpr<T> {
     }
 }
 
+pub struct ModExpr<T> {
+    pub name: Symbol,
+    pub body: Vec<Span<ItemKind<T>>>,
+}
+
+/// module-level items
+pub enum ItemKind<T> {
+    Mod(Visibility, ModExpr<T>),
+    Function(Visibility, FuncExpr<T>),
+}
+
+pub enum Visibility {
+    None,
+    Pub,
+}
+
 /// A parameter declaration in a function signature.
 ///
 /// The representation will need to change once pattern arguments are supported.

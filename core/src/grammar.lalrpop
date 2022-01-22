@@ -1,5 +1,4 @@
-use crate::parser::ast::{
-    AstError, UntypedExprKind, UntypedSpExpr, ErrorRecovery, FormalParam, FuncExpr, ArithOp, CompareOp};
+use crate::parser::ast::*;
 use crate::lexer::Token;
 use crate::span::Span;
 use crate::types::{ID, Type};
@@ -41,6 +40,7 @@ extern {
         "false" => Token::False,
         "int" => Token::Int,
         "bool" => Token::Bool,
+        "mod" => Token::Mod,
         "fn" => Token::Fn,
         "->" => Token::RArrow,
         "pub" => Token::Pub,
@@ -51,18 +51,33 @@ extern {
 Sp<Rule>: UntypedSpExpr =
     <l: @L> <rule: Rule> <r: @R> => (l, Box::new(rule.into()), r).into();
 
+SpItem<Rule>: Span<ItemKind<UntypedSpExpr>> =
+    <l: @L> <rule: Rule> <r: @R> => (l, rule.into(), r).into();
+
+
 // Interns a string
 Symbol<Rule>: Symbol = {
     <rule: Rule> => symbols.intern_str(rule),
 }
 
 // Root of a module
-pub Program: UntypedSpExpr = {
-    Sp<Module>,
+pub Program: ModExpr<UntypedSpExpr> = {
+    Items => ModExpr { name: symbols.intern_str("top_level"), body: <> },
 }
 
-Module: UntypedExprKind = {
-        Sequence<Sp<Function>> => UntypedExprKind::Block(<>),
+Items: Vec<Span<ItemKind<UntypedSpExpr>>> = {
+        Sequence<VisItem>,
+}
+
+VisItem: Span<ItemKind<UntypedSpExpr>> = {
+    SpItem<Function>,
+    SpItem<Module>,
+}
+
+#[inline]
+Visibility: Visibility = {
+    "pub" => Visibility::Pub,
+    () => Visibility::None,
 }
 
 // Root of the REPL
@@ -225,19 +240,10 @@ IfExpr: UntypedExprKind = {
 
 // Functions
 
-Function: UntypedExprKind = {
-    <v:Visibility?> "fn" <name:Symbol<ID>> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
-    let id = if v == Some("pub") {
-        ID::PubFuncId(name.clone())
-    } else {
-        ID::Symbol(name.clone())
-    };
-    UntypedExprKind::Function(FuncExpr::new(name, id, params, ret, block))
+Function: ItemKind<UntypedSpExpr> = {
+    <v:Visibility> "fn" <name:Symbol<ID>> "(" <params:FunctionParameters> ")" <ret:FunctionReturnType> <block:Sp<Block>> => {
+    ItemKind::Function(v, FuncExpr::new(name, ID::Symbol(name.clone()), params, ret, block))
   },
-}
-
-Visibility: &'static str = {
-    "pub" => "pub",
 }
 
 FunctionParameters: Vec<FormalParam> = {
@@ -256,6 +262,13 @@ FunctionReturnType: Type = {
     () => Type::Void,
 }
 
+// Modules
+
+Module: ItemKind<UntypedSpExpr> = {
+    <v:Visibility> "mod" <name:Symbol<ID>> "{" <items:Items> "}" => {
+    ItemKind::Mod(v, ModExpr { name, body: items })
+  },
+}
 
 // Macros for delimited lists
 
